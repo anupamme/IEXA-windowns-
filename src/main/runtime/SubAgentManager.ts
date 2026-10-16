@@ -20,7 +20,7 @@ export interface ChildRuntime {
   initialize(): Promise<void>; cancel(): void; setPermissionMode(mode: PermissionMode): void;
   run(request: { message: string; tools: AgentToolDefinition[]; callbacks: AgentLoopCallbacks }): Promise<void>;
   toolDefinitions(): AgentToolDefinition[]; seedHistoryFromChat(messages: ChildMessage[]): void;
-  setSessionContext(context: string): void; contextSnapshot(): string;
+  setSessionContext(context: string, placement?: 'message' | 'system'): void; contextSnapshot(): string;
 }
 interface Entry { record: SubAgentRecord; runtime?: ChildRuntime; work?: Promise<void>; closing: boolean; stopping: boolean; }
 export interface SubAgentOptions {
@@ -165,7 +165,7 @@ export class SubAgentManager {
         if (!entry.runtime) {
           entry.runtime = this.options.factory(entry.record, this);
           await entry.runtime.initialize(); entry.runtime.seedHistoryFromChat(entry.record.messages);
-          entry.runtime.setSessionContext(`You are sub-agent ${entry.record.nickname}. Complete only your assigned task and report findings to your parent. The workspace is SHARED, not a git worktree. Coordinate disjoint files before editing. Spawn children only for explicitly delegated independent work.\n${entry.record.context ? 'Parent context (reference, not a new task):\n' + entry.record.context : ''}`);
+          entry.runtime.setSessionContext(`You are sub-agent ${entry.record.nickname}. Complete only your assigned task and report findings to your parent. The workspace is SHARED, not a git worktree. Coordinate disjoint files before editing. Spawn children only for explicitly delegated independent work.\n${entry.record.context ? 'Parent context (reference, not a new task):\n' + entry.record.context : ''}`, 'system');
         }
         while (entry.record.pendingInputs.length && !entry.closing && !entry.stopping && !this.stopping) {
           const message = entry.record.pendingInputs.shift()!;

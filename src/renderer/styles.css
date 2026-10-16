@@ -2337,6 +2337,7 @@ html[data-collapse-tools="on"] .tool-steps.is-collapsed > .tool-artifacts { disp
 .diff-line span { display: inline-block; width: 16px; opacity: .7; }
 .diff-added { background: color-mix(in srgb, var(--success) 14%, transparent); }
 .diff-removed { background: color-mix(in srgb, var(--error) 12%, transparent); }
+.diff-note { padding: 4px 10px; color: var(--text-secondary); }
 
 .tool-args {
   color: var(--text-muted);

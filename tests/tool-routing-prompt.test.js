@@ -21,6 +21,23 @@ test('application tasks prefer direct commands and APIs, GUI remains a separate 
   assert.match(desktop.description, /Use this for actual GUI observation and input/);
 });
 
+test('choice questions to the user route through the ask_user card', () => {
+  const prompt = buildSystemPrompt({ workspaceDir: process.cwd(), hasProject: true });
+  const toolsList = prompt.indexOf('你可以使用以下工具');
+  const ask = prompt.indexOf('- **ask_user**');
+  assert.ok(toolsList >= 0 && ask > toolsList, 'ask_user is introduced in the tool list');
+  assert.ok(prompt.includes('需要用户做选择、勾选、确认或给出关键决定时'), 'tool bullet explains when to use it');
+  const comm = prompt.indexOf('## 任务沟通与澄清');
+  const guidance = prompt.indexOf('需要用户回答选择题');
+  assert.ok(comm >= 0 && guidance > comm, 'choice-question guidance lives in the communication section');
+  assert.ok(prompt.includes('应使用 **ask_user** 工具弹出问答卡片向用户提问并等待作答'), 'guidance names the tool');
+  assert.ok(prompt.includes('不要用纯文本代替卡片向用户提这类选择题'), 'guidance steers away from plain-text choice questions');
+  const tools = makeAgentTools();
+  const askTool = tools.find((t) => t.name === 'ask_user');
+  assert.ok(askTool, 'ask_user is exposed to providers');
+  assert.ok(String(askTool.description).includes('ask the user through an interactive card'), 'tool description promises the card');
+});
+
 test('the existing PowerShell process route executes a real command', { skip: process.platform !== 'win32' }, async () => {
   const result = await new ProcessManager().run(
     "Write-Output 'IEXA_SHELL_OK'", process.cwd(), new AbortController().signal,

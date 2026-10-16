@@ -5,13 +5,14 @@ import { BudgetManager } from './BudgetManager';
 import { CancellationManager } from './CancellationManager';
 import { ToolRuntime } from './ToolRuntime';
 import { PermissionMode, PermissionResolver } from '../security/PermissionManager';
+import { QuestionResolver } from './QuestionBroker';
 import { Trace } from '../observability/Trace';
 import { Metrics } from '../observability/Metrics';
 import { CostTracker } from '../observability/CostTracker';
 import { SubAgentManager, SubAgentSummary } from './SubAgentManager';
 import { TraceStore } from '../observability/TraceStore';
 
-export interface AgentRuntimeConfig extends Omit<AgentLoopConfig, 'toolRuntime' | 'sessionId' | 'getAbortSignal'> { sessionId: string; auditDir?: string; traceDir?: string; permissionResolver?: PermissionResolver; permissionMode?: PermissionMode; budget?: ConstructorParameters<typeof BudgetManager>[0]; desktopCaptureFrames?: boolean; subAgentDir?: string; onSubAgentChange?: (agent: SubAgentSummary) => void; onSubAgentUsage?: (usage: { inputTokens: number; outputTokens: number }) => void; subAgentTree?: SubAgentManager; }
+export interface AgentRuntimeConfig extends Omit<AgentLoopConfig, 'toolRuntime' | 'sessionId' | 'getAbortSignal'> { sessionId: string; auditDir?: string; traceDir?: string; permissionResolver?: PermissionResolver; permissionMode?: PermissionMode; budget?: ConstructorParameters<typeof BudgetManager>[0]; desktopCaptureFrames?: boolean; subAgentDir?: string; onSubAgentChange?: (agent: SubAgentSummary) => void; onSubAgentUsage?: (usage: { inputTokens: number; outputTokens: number }) => void; subAgentTree?: SubAgentManager; questionResolver?: QuestionResolver; }
 export interface AgentRequest { message: string; tools: AgentToolDefinition[]; callbacks: AgentLoopCallbacks; attachments?: Parameters<AgentLoop['run']>[3]; }
 
 export class AgentRuntime {
@@ -33,7 +34,7 @@ export class AgentRuntime {
     this.costs = new CostTracker(config.provider.name, config.provider.model);
     this.budget = new BudgetManager(config.budget);
     this.traceStore = config.traceDir ? new TraceStore(config.traceDir) : undefined;
-    this.tools = new ToolRuntime({ workspaceDir: config.workspaceDir, memoryDir: config.memoryDir, memoryEnabled: config.memoryEnabled, auditDir: config.auditDir, permissionResolver: config.permissionResolver, permissionMode: config.permissionMode, budget: this.budget, desktopCaptureFrames: config.desktopCaptureFrames });
+    this.tools = new ToolRuntime({ workspaceDir: config.workspaceDir, memoryDir: config.memoryDir, memoryEnabled: config.memoryEnabled, auditDir: config.auditDir, permissionResolver: config.permissionResolver, permissionMode: config.permissionMode, budget: this.budget, desktopCaptureFrames: config.desktopCaptureFrames, questionResolver: config.questionResolver });
     this.tools.registerDefaults(config.onSkillRead, config.onSkillWrite);
     this.loop = new AgentLoop({ ...config, sessionId: config.sessionId, toolRuntime: this.tools, getAbortSignal: () => this.cancellation.signal(config.sessionId) });
     this.subAgents = config.subAgentTree || (config.subAgentDir ? new SubAgentManager({
@@ -45,6 +46,8 @@ export class AgentRuntime {
         return new AgentRuntime({ ...config, sessionId: record.id, subAgentTree: manager, workspaceDir: record.workspaceDir,
         subAgentDir: undefined, permissionMode: this.permissionMode,
         permissionResolver: config.permissionResolver ? request => config.permissionResolver!({ ...request,
+          sessionId: config.sessionId, toolCallId: `${record.id}:${request.toolCallId || ''}` }) : undefined,
+        questionResolver: config.questionResolver ? request => config.questionResolver!({ ...request,
           sessionId: config.sessionId, toolCallId: `${record.id}:${request.toolCallId || ''}` }) : undefined,
         });
       },
@@ -63,7 +66,7 @@ export class AgentRuntime {
       onToolExecutionStart: (id, name, args) => { this.trace.event('tool_started', { id, name, args }); this.metrics.increment('tools_started'); this.state = { ...this.state, toolCalls: this.state.toolCalls + 1, currentTool: { id, name }, updatedAt: Date.now(), budget: this.budget.snapshot() }; request.callbacks.onToolExecutionStart?.(id, name, args); },
       onToolResult: (id, result) => { this.trace.event('tool_finished', { id, success: result.success, durationMs: result.durationMs }); this.metrics.increment(result.success ? 'tools_succeeded' : 'tools_failed'); request.callbacks.onToolResult(id, result); },
       onRetry: (attempt, delayMs, error) => { this.trace.event('retry', { attempt, delayMs, error }); this.metrics.increment('retries'); request.callbacks.onRetry?.(attempt, delayMs, error); },
-      onUsage: (usage) => { this.costs.record(usage); this.metrics.increment('provider_calls'); this.trace.event('provider_usage', { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }); request.callbacks.onUsage(usage); },
+      onUsage: (usage) => { this.costs.record(usage); this.metrics.increment('provider_calls'); this.trace.event('provider_usage', { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadInputTokens != null ? { cacheReadInputTokens: usage.cacheReadInputTokens } : {}) }); request.callbacks.onUsage(usage); },
       onDone: (reason) => { this.metrics.increment('runs_completed'); this.trace.event('run_completed', { reason }); terminal = () => { this.finish('completed'); request.callbacks.onDone(reason); }; }, onError: (error) => { this.metrics.increment('runs_failed'); this.trace.event('run_failed', { error }); terminal = () => { this.finish('failed'); request.callbacks.onError(error); }; }, onCancelled: () => { this.metrics.increment('runs_cancelled'); this.trace.event('run_cancelled'); terminal = () => { this.finish('cancelled'); request.callbacks.onCancelled(); }; },
     };
     this.activeRun = true;
@@ -93,7 +96,7 @@ export class AgentRuntime {
   registerDynamicTool(...args: Parameters<ToolRuntime['registerDynamicTool']>): void { this.tools.registerDynamicTool(...args); }
   grantPermission(toolName: string): void { this.tools.grantPermission(this.config.sessionId, toolName); }
   setPermissionMode(mode: PermissionMode): void { this.permissionMode = mode; this.tools.setPermissionMode(mode); if (!this.config.subAgentTree) this.subAgents?.setPermissionMode(mode); }
-  setSessionContext(value: string | null | undefined): void { this.loop.setSessionContext(value); }
+  setSessionContext(value: string | null | undefined, placement?: 'message' | 'system'): void { this.loop.setSessionContext(value, placement); }
   setCompactorSummary(value: string | null | undefined): void { this.loop.setCompactorSummary(value); }
   getCompactorSummary(): string { return this.loop.getCompactorSummary(); }
   seedHistoryFromChat(...args: Parameters<AgentLoop['seedHistoryFromChat']>): void { this.loop.seedHistoryFromChat(...args); }

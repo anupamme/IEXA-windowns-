@@ -45,6 +45,16 @@ export function compactToolResultForContext(output: string, toolName?: string): 
     if (end < 0) return '[Desktop output exceeds context limit; request compact observation instead of raw JSON. No partial selector was retained.]';
     return output.slice(0, end) + note;
   }
+  if (toolName === 'file_read') {
+    // File reads arrive as line-oriented pages whose trailing [Paged] hint marks
+    // where to continue. Keep them intact within a generous context budget and
+    // cut only at a complete line so offset/lines continuation stays coherent.
+    const max = 16000;
+    if (output.length <= max) return output;
+    const note = '\n[File read truncated for context at a line boundary; re-request the remainder with file_read offset/lines windows.]';
+    const end = output.lastIndexOf('\n', Math.max(0, max - note.length));
+    return (end > 0 ? output.slice(0, end) : output.slice(0, Math.max(0, max - note.length))) + note;
+  }
   if (output.length <= TOOL_RESULT_COMPACT_AT) return output;
   const marker = `[... tool output compacted: ${output.length.toLocaleString()} chars total ...]`;
   const available = Math.max(240, MAX_TOOL_RESULT_CHARS - marker.length - 24);
@@ -116,6 +126,13 @@ export class AgentLoop {
   private callbacks: AgentLoopCallbacks | null = null;
   /** Durable per-session anchors supplied by the server after rehydration. */
   private sessionContext = '';
+  /**
+   * 'message' (default): drift-prone anchors ride the newest user message so
+   * the request head stays stable for provider-side prompt caching.
+   * 'system': envelopes written once and stable for the runtime's whole life
+   * (sub-agent identity) keep the original system-prompt placement.
+   */
+  private sessionContextPlacement: 'message' | 'system' = 'message';
   /** Codex-style compaction engine; kept as a field so the server can persist the summary. */
   private compactor: ContextManager | null = null;
   /** Summary can be loaded from disk before run() creates a request compactor. */
@@ -155,8 +172,9 @@ export class AgentLoop {
     ).filter(Boolean).join('\n')).join('\n\n').slice(-32000);
   }
 
-  setSessionContext(context: string | null | undefined): void {
+  setSessionContext(context: string | null | undefined, placement: 'message' | 'system' = 'message'): void {
     this.sessionContext = typeof context === 'string' ? context.trim() : '';
+    this.sessionContextPlacement = placement === 'system' ? 'system' : 'message';
   }
 
   /** Current Codex-style compaction summary (persisted across restarts). */
@@ -363,6 +381,14 @@ export class AgentLoop {
       this.restoredSummaryInjected = true;
     }
 
+    // Durable session anchors ride the newest user message, never the system
+    // prompt: the request head must stay byte-identical across calls so
+    // provider-side prefix caching re-uses system+tools+history and only the
+    // genuinely new tail is billed at full rate.
+    if (this.sessionContext && this.sessionContextPlacement === 'message') {
+      parts.unshift({ type: 'text', text: `<durable-session-context>\n${this.sessionContext}\n</durable-session-context>` });
+    }
+
     // Add user message to history
     const userMsg: AgentMessage = {
       role: 'user',
@@ -390,7 +416,14 @@ export class AgentLoop {
       skillsDir: this.config.skillsDir || null,
       soul: this.config.soul || null,
     });
-    const systemPrompt = this.sessionContext
+    // Prefix stability (prompt caching): indexes that drift between turns
+    // (root-session anchors) must not sit in the system prompt — a changed
+    // request head makes prefix-caching providers re-bill the entire
+    // conversation on every user turn. They travel as the leading block of the
+    // newest user message instead (see the parts assembly above). Contexts
+    // written once and stable for the whole runtime (sub-agent identity) keep
+    // the original system-prompt placement.
+    const systemPrompt = this.sessionContext && this.sessionContextPlacement === 'system'
       ? `${baseSystemPrompt}\n\n<durable-session-context>\n${this.sessionContext}\n</durable-session-context>`
       : baseSystemPrompt;
     const contextWindow = this.config.contextWindow != null

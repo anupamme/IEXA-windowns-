@@ -14,7 +14,7 @@ function fixture(t) {
   return { root, tools: new FileTools() };
 }
 
-function body(output) { return output.split('\n---\n')[1]?.split('\n\n[Truncated/paged')[0] || ''; }
+function body(output) { return output.split('\n---\n')[1]?.split('\n\n[Paged')[0] || ''; }
 
 test('file_read strips BOM, preserves Unicode characters, and reports every kind of paging', async (t) => {
   const { root, tools } = fixture(t);
@@ -28,12 +28,27 @@ test('file_read strips BOM, preserves Unicode characters, and reports every kind
   const emoji = await tools.readFile('emoji.txt', root, { maxLength: 1 });
   assert.equal(body(emoji.output), '😀');
   assert.doesNotMatch(emoji.output, /�/);
-  assert.match(emoji.output, /Truncated\/paged/);
+  assert.match(emoji.output, /\[Paged: stopped mid-line at line 1/);
+  assert.match(emoji.output, /offset=1/);
 
   fs.writeFileSync(path.join(root, 'lines.txt'), 'one\ntwo\nthree');
   const page = await tools.readFile('lines.txt', root, { lines: 1 });
   assert.equal(body(page.output), 'one');
-  assert.match(page.output, /Truncated\/paged/);
+  assert.match(page.output, /\[Paged: showing lines 1-1 of 3/);
+  assert.match(page.output, /offset=2/);
+  const remainder = await tools.readFile('lines.txt', root, { offset: 2 });
+  assert.equal(body(remainder.output), 'two\nthree');
+  assert.match(remainder.output, /\[Paged: showing lines 2-3 of 3 \(end of file\)\.\]/);
+  assert.doesNotMatch(remainder.output, /Continue with offset/);
+  const beyond = await tools.readFile('lines.txt', root, { offset: 9 });
+  assert.equal(body(beyond.output), '');
+  assert.match(beyond.output, /beyond the end of file \(3 lines\)/);
+  const tailAll = await tools.readFile('lines.txt', root, { direction: 'tail' });
+  assert.equal(body(tailAll.output), 'one\ntwo\nthree');
+  assert.doesNotMatch(tailAll.output, /\[Paged:/);
+  const charPage = await tools.readFile('lines.txt', root, { maxLength: 3 });
+  assert.equal(body(charPage.output), 'one');
+  assert.match(charPage.output, /3-char limit\). Continue with offset=2\./);
 });
 
 test('file_edit accepts displayed LF text for CRLF files and preserves file line endings', async (t) => {
@@ -123,4 +138,22 @@ test('file_read and file_write reject binary bytes without corrupting the file',
   const deepUtf16Read = await tools.readFile('deep-utf16.dat', root);
   assert.equal(deepUtf16Read.success, false);
   assert.match(deepUtf16Read.output, /binary/);
+});
+
+test('file_read pages stay intact for the model context; oversized reads cut at a line boundary', () => {
+  const { compactToolResultForContext } = require('../dist/main/agent/AgentLoop');
+  const page = 'File: demo.js\nSize: 9000 bytes\nLines: 200\nModified: x\n---\n'
+    + Array.from({ length: 200 }, (_, i) => 'const value' + i + ' = ' + 'x'.repeat(40) + ';').join('\n');
+  assert.ok(page.length < 16000, String(page.length));
+  assert.equal(compactToolResultForContext(page, 'file_read'), page);
+
+  const large = 'File: big.js\n---\n'
+    + Array.from({ length: 4000 }, (_, i) => 'const row' + i + ' = ' + 'y'.repeat(30) + ';').join('\n');
+  assert.ok(large.length > 16000, String(large.length));
+  const kept = compactToolResultForContext(large, 'file_read');
+  assert.ok(kept.length <= 16000, String(kept.length));
+  const lines = kept.split('\n');
+  assert.match(lines[lines.length - 1], /^\[File read truncated for context at a line boundary/);
+  assert.match(lines[lines.length - 2], /^const row\d+ = y+;$/);
+  assert.match(kept, /^File: big\.js\n---\nconst row0 = /);
 });

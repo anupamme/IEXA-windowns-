@@ -30,6 +30,7 @@ import {
 import { SkillStore, ensureBundledSkills } from './skills/SkillStore';
 import { maxThinkingLevel, clampThinkingLevel, modelSupportsVision, shouldUseVisionProxy, VisionCapability } from './providers/ModelCapabilities';
 import { PermissionBroker, PermissionRequest, PendingPermission, PermissionDecision, PermissionMode } from './security/PermissionManager';
+import { QuestionBroker, AskUserRequest, QuestionAnswer, PendingQuestion } from './runtime/QuestionBroker';
 import { SessionManager } from './session/SessionManager';
 import { TraceStore } from './observability/TraceStore';
 import { JsonStore } from './persistence/JsonStore';
@@ -455,7 +456,7 @@ interface ChatMessage {
   fileUndo?: { paths: string[]; timestamp: number };
   /** Files changed successfully in this assistant turn, independent of final prose. */
   deliverables?: { path: string; absolutePath?: string; added?: number; removed?: number }[];
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: { inputTokens: number; outputTokens: number; cacheReadInputTokens?: number };
   attachments?: ChatAttachmentMeta[];
   timestamp: number;
 }
@@ -575,6 +576,30 @@ function loadMessages(sessionId: string): ChatMessage[] {
 
 async function saveMessages(sessionId: string, msgs: ChatMessage[]): Promise<void> {
   await messageStore.save(sessionId, msgs);
+}
+
+// Rollback snapshots (up to ~700KB per edit) are server-owned undo material and
+// stay in the stored session. Everything that crosses to the renderer — the GET
+// route and the live SSE stream — ships a boolean instead so panels can still
+// gate the undo button without hauling base64 through every payload.
+export function clientFileChange<T>(change: T): T {
+  if (!change || typeof change !== 'object') return change;
+  const { rollback, ...rest } = change as T & Record<string, unknown> & { rollback?: unknown };
+  return { ...rest, hasRollback: Boolean(rollback) } as T;
+}
+
+export function clientMessages(msgs: ChatMessage[]): ChatMessage[] {
+  return msgs.map((message) => {
+    if (!message.toolCalls || !message.toolCalls.length) return message;
+    let changed = false;
+    const toolCalls = message.toolCalls.map((call) => {
+      const fileChange = call && call.result && call.result.fileChange;
+      if (!fileChange) return call;
+      changed = true;
+      return { ...call, result: { ...call.result, fileChange: clientFileChange(fileChange) } } as typeof call;
+    });
+    return changed ? { ...message, toolCalls } : message;
+  });
 }
 
 interface DurableSessionContext {
@@ -767,6 +792,8 @@ function recordTokenUsage(profile: ModelProfile, usage: LLMUsage): void {
 const agentCache = new Map<string, AgentRuntime>();
 const permissionBroker = new PermissionBroker();
 const permissionSubscriptions = new Map<string, () => void>();
+const questionBroker = new QuestionBroker();
+const questionSubscriptions = new Map<string, () => void>();
 
 function permissionPayload(item: PendingPermission): Record<string, unknown> {
   const tool = item.request.tool;
@@ -777,6 +804,19 @@ function permissionPayload(item: PendingPermission): Record<string, unknown> {
     runId: item.request.runId,
     tool: { name: tool.name, description: tool.description, risk: tool.risk },
     args: item.request.args,
+    createdAt: item.createdAt,
+    expiresAt: item.expiresAt,
+  };
+}
+
+function questionPayload(item: PendingQuestion): Record<string, unknown> {
+  return {
+    id: item.id,
+    sessionId: item.sessionId,
+    toolCallId: item.toolCallId,
+    runId: item.runId,
+    title: item.title,
+    questions: item.questions,
     createdAt: item.createdAt,
     expiresAt: item.expiresAt,
   };
@@ -944,6 +984,7 @@ function getOrCreateAgent(sessionId: string): AgentRuntime | null {
     },
     contextWindow: effectiveContextWindow(profile, profile.contextCompactionLimit ?? getContextCompactionLimit()),
     permissionResolver: (request: PermissionRequest) => permissionBroker.request(request),
+    questionResolver: (request: AskUserRequest) => questionBroker.request(request),
     permissionMode: getPermissionMode(),
     desktopCaptureFrames: profileLikelySupportsVision(profile),
   };
@@ -954,7 +995,7 @@ function getOrCreateAgent(sessionId: string): AgentRuntime | null {
   if (agentCache.size >= 32) {
     const idle = [...agentCache.keys()].find(id => !runningSessionIds.has(id) && !agentCache.get(id)?.hasBackgroundWork());
     if (!idle) throw new HttpError(429, '活动会话配额已满。');
-    cancelSessionAgent(idle); clearPermissionSubscription(idle);
+    cancelSessionAgent(idle); clearPermissionSubscription(idle); clearQuestionSubscription(idle);
   }
   agentCache.set(sessionId, agent);
   return agent;
@@ -973,6 +1014,7 @@ function cancelSessionAgent(sessionId: string, dispose = true): void {
     }
   }
   permissionBroker.cancelSession(sessionId);
+  questionBroker.cancelSession(sessionId);
 }
 
 function invalidateAgentForNextTurn(sessionId: string): void {
@@ -1001,6 +1043,14 @@ function clearPermissionSubscription(sessionId: string): void {
   }
 }
 
+function clearQuestionSubscription(sessionId: string): void {
+  const unsubscribe = questionSubscriptions.get(sessionId);
+  if (unsubscribe) {
+    unsubscribe();
+    questionSubscriptions.delete(sessionId);
+  }
+}
+
 // Helper: persist chat messages after a turn
 async function saveSessionMessages(
   sessionId: string,
@@ -1008,7 +1058,7 @@ async function saveSessionMessages(
   userMsg: ChatMessage,
   assistantText: string,
   toolCalls: { id: string; name: string; args: Record<string, unknown>; result?: { metadata?: Record<string, unknown>; output: string; success: boolean; todos?: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }>; pluginUI?: import('./plugins/PluginPresentation').PluginPresentation; fileChange?: NonNullable<import('./providers/types').ToolExecutionResult['fileChange']>; artifacts?: NonNullable<import('./providers/types').ToolExecutionResult['artifacts']> } }[],
-  usage: { inputTokens: number; outputTokens: number } | undefined,
+  usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens?: number } | undefined,
   thinking = '',
   thinkingLevel = getThinkingLevel(),
   transcript?: TranscriptEvents,
@@ -1583,7 +1633,7 @@ function createServer(auth: LocalApiAuth): http.Server {
     })) return;
 
     if (await handleRuntimeRoute(req, res, url, {
-      agents: agentCache, permissionBroker, permissionPayload,
+      agents: agentCache, permissionBroker, permissionPayload, questionBroker, questionPayload,
       getPermissionMode, normalizePermissionMode,
       setPermissionMode: (mode) => { const settings = loadSettings(); settings.permissionMode = mode; saveSettings(settings); },
       loadJobs, readTraces: (sessionId, limit) => new TraceStore(TRACES_DIR).read(sessionId, limit),
@@ -1800,7 +1850,7 @@ function createServer(auth: LocalApiAuth): http.Server {
         }
         const session = loadSessionStore().sessions.find((item) => item.id === sid);
         if (!session) { jsonReply(res, 404, { error: '会话未找到' }); return; }
-        jsonReply(res, 200, { messages: msgs, session });
+        jsonReply(res, 200, { messages: clientMessages(msgs), session });
         return;
       }
 
@@ -2321,6 +2371,10 @@ ${recentMemories}
         permissionSubscriptions.set(sessionId, permissionBroker.subscribe(sessionId, (pending) => {
           if (!res.writableEnded) sendSSE(res, 'permission_required', permissionPayload(pending));
         }));
+        clearQuestionSubscription(sessionId);
+        questionSubscriptions.set(sessionId, questionBroker.subscribe(sessionId, (pending) => {
+          if (!res.writableEnded) sendSSE(res, 'question_required', questionPayload(pending));
+        }));
         // AgentLoop reports context after it has assembled the complete model
         // envelope (system prompt, tools, durable context and history). A
         // server-side visible-text estimate would undercount this request.
@@ -2335,7 +2389,7 @@ ${recentMemories}
         let assistantThinkingText = '';
         const transcriptRecorder = new TranscriptRecorder();
         let assistantToolCalls: ChatMessage['toolCalls'] = [];
-        let lastUsage: { inputTokens: number; outputTokens: number } | undefined;
+        let lastUsage: { inputTokens: number; outputTokens: number; cacheReadInputTokens?: number } | undefined;
         let titleJob: Promise<void> | null = null;
         const streamBatcher = new StreamBatcher((event: string, data: unknown) => {
           sendSSE(res, event, data);
@@ -2430,7 +2484,7 @@ ${recentMemories}
               todos: r.todos,
               metadata: r.metadata?.desktop ? { desktop: r.metadata.desktop } : undefined,
               pluginUI: r.pluginUI,
-              fileChange: r.fileChange,
+              fileChange: r.fileChange ? clientFileChange(r.fileChange) : undefined,
               artifacts,
               imageData: r.imageData ? r.imageData.toString('base64') : undefined,
               imageMimeType: r.imageMimeType,
@@ -2438,7 +2492,7 @@ ${recentMemories}
           },
           onRetry: (attempt, delayMs, error) => emitTurnEvent('retry', { attempt, delayMs, error }),
           onUsage: (u: LLMUsage) => {
-            lastUsage = { inputTokens: u.inputTokens, outputTokens: u.outputTokens };
+            lastUsage = { inputTokens: u.inputTokens, outputTokens: u.outputTokens, ...(u.cacheReadInputTokens != null ? { cacheReadInputTokens: u.cacheReadInputTokens } : {}) };
             // Persist each provider usage receipt immediately; a turn can contain multiple model calls.
             recordTokenUsage(profile, u);
             emitTurnEvent('usage', u);
@@ -2496,9 +2550,11 @@ ${recentMemories}
           finishPendingAgentInvalidation(sessionId);
         }
         clearPermissionSubscription(sessionId);
+        clearQuestionSubscription(sessionId);
         if (titleJob) await titleJob;
       } catch (err: unknown) {
         if (ownsSessionLock) clearPermissionSubscription(requestSessionId);
+        if (ownsSessionLock) clearQuestionSubscription(requestSessionId);
         if (!res.headersSent) jsonReply(res, 500, { error: (err as Error).message });
         else if (!res.writableEnded && !res.destroyed) {
           sendSSE(res, 'error', { message: (err as Error).message });

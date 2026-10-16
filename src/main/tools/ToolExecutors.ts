@@ -192,7 +192,9 @@ export async function buildMediaDisplayResult(filePath: string, workspaceDir: st
 
 const fileChanges = require(path.join(__dirname, '../../../src/renderer/services/FileChangeSummary.js'));
 function changeSummary(filePath: string, before: string, after: string, absolutePath: string, beforeBytes: Buffer, beforeExists = true, encodedAfter?: Buffer): ToolExecutionResult['fileChange'] {
-  const limit = 120000;
+  // Slices stay generous enough for the diff card + review, but small enough to
+  // keep long, edit-heavy sessions light (they used to carry 120K chars per side).
+  const limit = 30000;
   const afterBytes = encodedAfter || Buffer.from(after, 'utf8');
   const diff = fileChanges.diff(before, after);
   const rollback = beforeBytes.length <= 512 * 1024 && afterBytes.length <= 512 * 1024 ? {
@@ -315,6 +317,8 @@ export class FileTools {
       const selectedLines: string[] = [];
       let selectedChars = 0;
       let totalLines = 0;
+      let lastIncludedLine = 0;
+      let cutLine = 0;
       let omittedByLineLimit = false;
       let omittedByCharLimit = false;
 
@@ -340,18 +344,42 @@ export class FileTools {
             selectedLines.push(characters.slice(0, remaining).join(''));
             selectedChars = maxLen;
             omittedByCharLimit = true;
+            lastIncludedLine = totalLines;
+            cutLine = totalLines;
           } else {
             selectedLines.push(line);
             selectedChars += separatorChars + characters.length;
+            lastIncludedLine = totalLines;
           }
         }
       } finally { lineReader.close(); rawInput.destroy(); }
 
       let content = selectedLines.join('\n');
       if (tailMode && Array.from(content).length > maxLen) { content = safeSlice(content, maxLen, true); omittedByCharLimit = true; }
-      const truncated = omittedByLineLimit || omittedByCharLimit || (!tailMode && startLine > 1 && totalLines >= startLine);
+      const firstShown = selectedLines.length
+        ? (tailMode ? Math.max(1, totalLines - selectedLines.length + 1) : startLine)
+        : 0;
+      const lastShown = selectedLines.length
+        ? (tailMode ? totalLines : lastIncludedLine)
+        : 0;
       const header = `File: ${filePath}\nSize: ${stat.size} bytes\nLines: ${totalLines}\nModified: ${stat.mtime.toISOString()}\n`;
-      const trailer = truncated ? `\n\n[Truncated/paged at ${maxLen} chars]` : '';
+      let trailer = '';
+      if (!tailMode && selectedLines.length === 0) {
+        trailer = totalLines === 0
+          ? '\n\n[Paged: file is empty.]'
+          : `\n\n[Paged: offset ${startLine} is beyond the end of file (${totalLines} lines).]`;
+      } else if (cutLine > 0) {
+        trailer = `\n\n[Paged: stopped mid-line at line ${cutLine} (${maxLen}-char limit). Continue with offset=${cutLine}.]`;
+      } else if (tailMode && omittedByCharLimit) {
+        trailer = `\n\n[Paged: showing the last ${maxLen} chars of ${totalLines} lines.]`;
+      } else if (tailMode && omittedByLineLimit) {
+        trailer = `\n\n[Paged: showing last ${selectedLines.length} lines (${firstShown}-${lastShown} of ${totalLines}).]`;
+      } else if (omittedByLineLimit || omittedByCharLimit) {
+        const cause = omittedByLineLimit ? `${lineLimit}-line limit` : `${maxLen}-char limit`;
+        trailer = `\n\n[Paged: showing lines ${firstShown}-${lastShown} of ${totalLines} (${cause}). Continue with offset=${lastShown + 1}.]`;
+      } else if (startLine > 1) {
+        trailer = `\n\n[Paged: showing lines ${firstShown}-${lastShown} of ${totalLines} (end of file).]`;
+      }
       return { output: header + '---\n' + content + trailer, success: true };
     } catch (err: unknown) {
       const error = err as NodeJS.ErrnoException;

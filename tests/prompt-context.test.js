@@ -73,7 +73,11 @@ test('real runtime captures the same application input sent to provider, with pr
   const preview = JSON.parse(store.read('fixture-session').preview.text);
   assert.deepEqual(preview, sent);
   assert.match(preview.systemPrompt, /ROOT_GUIDANCE_MARKER/);
-  assert.match(preview.systemPrompt, /DURABLE_CONTEXT_MARKER/);
+  // Durable anchors must travel in the newest user message, not the request
+  // head: a per-turn system-prompt change would wipe provider prefix caches
+  // and re-bill the whole conversation on every turn.
+  assert.doesNotMatch(preview.systemPrompt, /DURABLE_CONTEXT_MARKER/);
+  assert.match(JSON.stringify(preview.messages), /DURABLE_CONTEXT_MARKER/);
   assert.match(preview.systemPrompt, /只读配置检查/);
   assert.equal(calls, 1);
   store.clear('fixture-session');

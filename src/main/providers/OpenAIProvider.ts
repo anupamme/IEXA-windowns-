@@ -180,7 +180,18 @@ export class OpenAIProvider {
             if (event.usage) {
               inputTokens = event.usage.prompt_tokens || event.usage.input_tokens || 0;
               outputTokens = event.usage.completion_tokens || event.usage.output_tokens || 0;
-              yield { type: 'usage', usage: { inputTokens, outputTokens } };
+              // Cache receipts: DeepSeek reports prompt_cache_hit_tokens; OpenAI
+              // and most compatible gateways use prompt_tokens_details.cached_tokens.
+              // Surfacing the number end-to-end makes a dead prefix cache visible
+              // instead of silently re-billing the full prompt on every call.
+              const cacheHint = event.usage.prompt_cache_hit_tokens
+                ?? event.usage.prompt_tokens_details?.cached_tokens
+                ?? event.usage.cache_read_input_tokens;
+              if (typeof cacheHint === 'number' && Number.isFinite(cacheHint) && cacheHint >= 0) {
+                yield { type: 'usage', usage: { inputTokens, outputTokens, cacheReadInputTokens: Math.min(cacheHint, inputTokens || cacheHint) } };
+              } else {
+                yield { type: 'usage', usage: { inputTokens, outputTokens } };
+              }
             }
 
             const choice = event.choices?.[0];
@@ -529,7 +540,17 @@ export class OpenAIProvider {
           if (type === 'response.completed' || (type === 'response.incomplete' && event.response?.incomplete_details?.reason === 'max_output_tokens')) {
             const completed = (event.response || {}) as Record<string, any>;
             const usage = completed.usage || event.usage;
-            if (usage) yield { type: 'usage', usage: { inputTokens: Number(usage.input_tokens || usage.prompt_tokens || 0), outputTokens: Number(usage.output_tokens || usage.completion_tokens || 0) } };
+            if (usage) {
+              const responseInputTokens = Number(usage.input_tokens || usage.prompt_tokens || 0);
+              const responseOutputTokens = Number(usage.output_tokens || usage.completion_tokens || 0);
+              // Responses API exposes cache hits under input_tokens_details.
+              const cacheHint = usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens;
+              if (typeof cacheHint === 'number' && Number.isFinite(cacheHint) && cacheHint >= 0) {
+                yield { type: 'usage', usage: { inputTokens: responseInputTokens, outputTokens: responseOutputTokens, cacheReadInputTokens: Math.min(cacheHint, responseInputTokens || cacheHint) } };
+              } else {
+                yield { type: 'usage', usage: { inputTokens: responseInputTokens, outputTokens: responseOutputTokens } };
+              }
+            }
             for (const call of calls.values()) yield* finishCall(call);
             emittedDone = true;
             yield { type: 'done', stopReason: type === 'response.incomplete' ? 'maxTokens' : calls.size ? 'toolUse' : 'endTurn' };

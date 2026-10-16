@@ -108,6 +108,48 @@ export function makeAgentTools(memoryEnabled: boolean = true): AgentToolDefiniti
       propertyOrdering: ['todos'],
     },
     {
+      name: 'ask_user',
+      description:
+        'Pause the turn and ask the user through an interactive card in the conversation, then wait for their answers before continuing. Supports single choice (options), multiple choice (multi_select: true), free text (no options, or allow_free_text: true) and a lightweight confirmation (confirm). Use it when a decision, preference, missing detail or explicit confirmation is required — especially before risky or irreversible actions — instead of guessing. One card may contain several questions; the user answers them one by one and submits once. Do not use it for small talk or when the answer is already available.',
+      parameters: {
+        tool_title: { type: 'string', description: 'Short card title summary, e.g. 「部署确认」.' },
+        title: { type: 'string', description: 'Card title. Falls back to tool_title when omitted.' },
+        confirm: { type: 'string', description: 'Confirmation question rendered with 确认/取消 buttons. Use either confirm or questions, not both.' },
+        questions: {
+          type: 'array',
+          description: 'Question list (1-8 items). The user answers them one by one.',
+          items: {
+            type: 'object',
+            description: 'One card question.',
+            properties: {
+              id: { type: 'string', description: 'Stable answer id (optional; defaults to q1, q2…).' },
+              header: { type: 'string', description: 'Short label chip (≤16 chars).' },
+              question: { type: 'string', description: 'Full question text.' },
+              options: {
+                type: 'array',
+                description: 'Choice list. Omit for a plain text-input question.',
+                items: {
+                  type: 'object',
+                  description: 'One option.',
+                  properties: {
+                    label: { type: 'string', description: 'Option text shown to the user.' },
+                    description: { type: 'string', description: 'Optional supporting detail.' },
+                  },
+                  required: ['label'],
+                },
+              },
+              multi_select: { type: 'boolean', description: 'Allow selecting several options.' },
+              allow_free_text: { type: 'boolean', description: 'Also accept a typed answer. Defaults to true when no options are given.' },
+              placeholder: { type: 'string', description: 'Placeholder for the free-text input.' },
+            },
+            required: ['question'],
+          },
+        },
+      },
+      required: ['tool_title'],
+      propertyOrdering: ['tool_title', 'title', 'confirm', 'questions'],
+    },
+    {
       name: 'shell_execute',
       description:
         'Execute a command in a fresh shell process with stdout and stderr captured. Prefer direct CLI, PowerShell and public APIs for application tasks they support; use desktop_control for real GUI observation/input. On Windows, set shell to cmd for CMD/batch syntax or powershell/pwsh for raw PowerShell source. auto remains compatible with commands that start with powershell -Command. Default timeout is 15 minutes (900s).',
@@ -139,7 +181,7 @@ export function makeAgentTools(memoryEnabled: boolean = true): AgentToolDefiniti
     {
       name: 'file_read',
       description:
-        'Read a file from the local filesystem. Returns file content with metadata. Rejects binary files. Faster than shell_execute for reading files.',
+        'Read a file from the local filesystem. Returns file content with metadata. Rejects binary files. Faster than shell_execute for reading files. Paged reads end with a [Paged] trailer: the shown line range and the exact offset to continue from.',
       parameters: {
         tool_title: {
           type: 'string',

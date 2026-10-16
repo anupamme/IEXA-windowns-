@@ -13,9 +13,10 @@ import { ArtifactStore } from '../context/ArtifactStore';
 import { CommandPolicy } from '../tools/shell/CommandPolicy';
 import { DesktopAgent } from '../tools/DesktopAgent';
 import { makeAgentTools } from '../tools/ToolDefinitions';
+import { QuestionResolver, normalizeAskUserArgs, formatQuestionAnswers } from './QuestionBroker';
 
-export interface ToolRuntimeConfig { workspaceDir: string; memoryDir: string; memoryEnabled?: boolean; auditDir?: string; permissionResolver?: ConstructorParameters<typeof PermissionManager>[1]; permissionMode?: PermissionMode; budget?: BudgetManager; desktopCaptureFrames?: boolean; pathMode?: 'workspace' | 'selected-roots'; selectedRoots?: readonly string[]; }
-const risk: Record<string, ToolDefinition['risk']> = { project_instructions: 'low', todo_write: 'low', shell_execute: 'high', file_read: 'low', file_write: 'medium', file_edit: 'medium', browser_fetch: 'low', web_search: 'low', display_file: 'medium', memory_write: 'medium', memory_get: 'low' };
+export interface ToolRuntimeConfig { workspaceDir: string; memoryDir: string; memoryEnabled?: boolean; auditDir?: string; permissionResolver?: ConstructorParameters<typeof PermissionManager>[1]; permissionMode?: PermissionMode; budget?: BudgetManager; desktopCaptureFrames?: boolean; pathMode?: 'workspace' | 'selected-roots'; selectedRoots?: readonly string[]; questionResolver?: QuestionResolver; }
+const risk: Record<string, ToolDefinition['risk']> = { project_instructions: 'low', todo_write: 'low', ask_user: 'low', shell_execute: 'high', file_read: 'low', file_write: 'medium', file_edit: 'medium', browser_fetch: 'low', web_search: 'low', display_file: 'medium', memory_write: 'medium', memory_get: 'low' };
 
 export class ToolRuntime {
   readonly registry = new ToolRegistry();
@@ -137,6 +138,19 @@ export class ToolRuntime {
   }
   getToolExecutions() { return this.lifecycle.snapshot(); }
   getBudget(): ReturnType<BudgetManager['snapshot']> { return this.budget.snapshot(); }
+  /** ask_user: render an interactive card and resolve once the user answers (or the wait ends). */
+  private async askUser(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    if (!this.config.questionResolver) return { output: 'ask_user 不可用：当前客户端没有交互界面，无法展示提问卡片。请直接改用普通文本向用户提问。', success: false };
+    let normalized;
+    try { normalized = normalizeAskUserArgs(args); }
+    catch (error) { return { output: (error as Error).message || 'ask_user 参数无效。', success: false }; }
+    const answers = await this.config.questionResolver({
+      sessionId: context.sessionId, toolCallId: context.toolCallId, runId: this.lifecycle.runId,
+      title: normalized.title, questions: normalized.questions, signal: context.signal,
+    });
+    if (answers === null) return { output: '提问未完成：用户关闭了提问卡片或本轮已取消，没有收到回答。不要重复发起同一提问；如果仍需要答案，请简要说明原因，或改用普通文本询问。', success: false };
+    return { output: formatQuestionAnswers(normalized.title, normalized.questions, answers), success: true, summary: '用户已回答提问' };
+  }
   beginRun(allowedTools?: Iterable<string>): void {
     if (this.activeExecutions) throw new Error('Previous tool executions are still settling; wait before starting another run.');
     this.executions.clear(); this.desktop.resetControl(); this.lifecycle = new ToolLifecycle();
@@ -165,6 +179,7 @@ export class ToolRuntime {
           onEvent: desktop => { try { context.onToolState?.(this.lifecycle.progress(context.sessionId, context.toolCallId, desktop)); } catch {} },
         });
         if (definition.name === 'todo_write') return todo(args);
+        if (definition.name === 'ask_user') return this.askUser(args, context);
         if (definition.name === 'shell_execute') {
           const requestedShell = ['auto', 'cmd', 'powershell', 'pwsh'].includes(String(args.shell || 'auto'))
             ? String(args.shell || 'auto') as 'auto' | 'cmd' | 'powershell' | 'pwsh'
@@ -184,7 +199,7 @@ export class ToolRuntime {
         if (definition.name === 'file_write') { const result = await this.files.writeFile(resolved.path, String(args.content || ''), this.config.workspaceDir, { append: args.append === true, createDirs: args.create_dirs === true }); if (result.success) onSkillWrite?.(resolved.path); return result; }
         if (definition.name === 'file_edit') { const result = await this.files.editFile(resolved.path, String(args.old_string || ''), String(args.new_string || ''), this.config.workspaceDir, args.replace_all === true); if (result.success) onSkillWrite?.(resolved.path); return result; }
         return buildMediaDisplayResult(resolved.path, this.config.workspaceDir, this.pathPolicy());
-      }, { risk: definition.name === 'desktop_control' ? 'medium' : risk[definition.name], parallelSafe: definition.name === 'project_instructions' || definition.name === 'file_read' || definition.name === 'memory_get' || definition.name === 'browser_fetch' || definition.name === 'web_search', cancellable: definition.name === 'browser_fetch' || definition.name === 'web_search' || definition.name === 'shell_execute' || definition.name === 'desktop_control', requiresApproval: definition.name === 'desktop_control' ? false : risk[definition.name] === 'high' });
+      }, { risk: definition.name === 'desktop_control' ? 'medium' : risk[definition.name], parallelSafe: definition.name === 'project_instructions' || definition.name === 'file_read' || definition.name === 'memory_get' || definition.name === 'browser_fetch' || definition.name === 'web_search', cancellable: definition.name === 'browser_fetch' || definition.name === 'web_search' || definition.name === 'shell_execute' || definition.name === 'desktop_control' || definition.name === 'ask_user', requiresApproval: definition.name === 'desktop_control' ? false : risk[definition.name] === 'high' });
     }
   }
 }

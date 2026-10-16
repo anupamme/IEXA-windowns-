@@ -1252,7 +1252,7 @@ async function switchSession(id, updateList = true) {
           if (msg.usage) {
             const usageEl = document.createElement('div');
             usageEl.className = 'message-usage';
-            renderMessageUsage(usageEl, msg.usage.inputTokens || 0, msg.usage.outputTokens || 0);
+            renderMessageUsage(usageEl, msg.usage.inputTokens || 0, msg.usage.outputTokens || 0, msg.usage.cacheReadInputTokens);
             const footer = el.querySelector('.assistant-message-footer');
             const actions = el.querySelector('.assistant-message-actions');
             if (footer && actions) footer.insertBefore(usageEl, actions); else el.appendChild(usageEl);
@@ -1275,6 +1275,13 @@ async function switchSession(id, updateList = true) {
   }
   snapshotActiveSessionRuntime();
   scrollHistoryToLatest(id);
+  }
+
+  // Reconcile live ask_user cards when re-opening a conversation that is still running.
+  if (window.IexaQuestionCard && runtimeForSession(id)?.isProcessing) {
+    window.IexaQuestionCard.syncPending(id, Object.assign(questionCardOptions(), {
+      isCurrent: () => visibleSessionId === id && currentSessionId === id,
+    }));
   }
 
   // The composer always describes the selected conversation's pinned route.
@@ -2176,7 +2183,6 @@ async function runChatTurn(message, displayText, attachments, opts) {
         hideWaitingIndicator();
         finishTaskSummary();
         finalizeAssistantMessage(currentAssistantMsg);
-        renderPendingMessageUsage(currentAssistantMsg);
         setProcessing(false);
         scheduleQueueDrain();
       }
@@ -2305,6 +2311,9 @@ function handleSSEEvent(raw, turnToken) {
         break;
       case 'tool_state': {
         if (data.status !== 'awaiting_approval') window.IexaPermissionDialog.closeForTool?.(data.sessionId, data.id, data.runId);
+        if (data.name === 'ask_user' && ['completed', 'failed', 'denied', 'cancelled', 'timed_out'].includes(data.status)) {
+          window.IexaQuestionCard?.applyToolState?.(data.id, data.status);
+        }
         const info = currentToolBlocks[data.id];
         if (info) window.IexaToolLifecycleView.apply(info.block, data, setToolStepStatus);
         break;
@@ -2327,6 +2336,9 @@ function handleSSEEvent(raw, turnToken) {
       case 'permission_required':
         showPermissionDialog(data);
         break;
+      case 'question_required':
+        showQuestionCard(data);
+        break;
       case 'error':
         handleError(data.message, turnToken);
         break;
@@ -2348,6 +2360,39 @@ function handleSSEEvent(raw, turnToken) {
 function showPermissionDialog(data) {
   subAgentView?.dismiss();
   window.IexaPermissionDialog.show(data, { apiBase: API_BASE, onError: addError });
+}
+
+/** Mount an ask_user card inside the live transcript, right after its tool step. */
+function mountQuestionCard(el, data) {
+  const info = data && data.toolCallId ? currentToolBlocks[data.toolCallId] : null;
+  const host = info?.block?.closest('.tool-steps');
+  if (host) {
+    host.appendChild(el);
+    return;
+  }
+  try {
+    ensureToolStepsHost().appendChild(el);
+  } catch {
+    const msg = ensureAssistantMessage();
+    window.IexaTranscriptView.append(msg, el);
+  }
+}
+
+function questionCardOptions() {
+  return {
+    apiBase: API_BASE,
+    onError: addError,
+    scrollToBottom: () => scrollToBottom(),
+    mount: mountQuestionCard,
+  };
+}
+
+function showQuestionCard(data) {
+  if (!window.IexaQuestionCard) return;
+  hideWaitingIndicator();
+  window.IexaQuestionCard.show(data, questionCardOptions());
+  const info = data && data.toolCallId ? currentToolBlocks[data.toolCallId] : null;
+  if (info) setToolStepStatus(info.block, 'streaming', '等待用户作答');
 }
 
 function handleRetry(data) {
@@ -2575,6 +2620,7 @@ const TOOL_LABELS = {
   browser_fetch: '抓取网页',
   memory_write: '写入记忆',
   memory_get: '读取记忆',
+  ask_user: '向用户提问',
 };
 
 const TOOL_ICONS = {
@@ -2591,6 +2637,7 @@ const TOOL_ICONS = {
   browser_fetch: 'globe',
   memory_write: 'memory',
   memory_get: 'search',
+  ask_user: 'chat',
 };
 
 function toolDisplayName(name) {
@@ -3245,6 +3292,7 @@ function setPagedText(element, text, options) {
 }
 
 function handleToolResult(id, output, success, todos, fileChange, imageData, imageMimeType, artifacts, executionStatus, durationMs, pluginUI, metadata) {
+  window.IexaQuestionCard?.completeForResult?.(id, { success, executionStatus });
   const info = currentToolBlocks[id];
   if (!info) return;
 
@@ -3501,7 +3549,7 @@ function renderDeliverables(messageEl, files) {
   const details = document.createElement('div'); details.className = 'turn-change-details'; details.hidden = true;
   const undone = new Set(messageEl._fileUndoPaths || []);
   const allUndone = unique.every(file => undone.has(file.absolutePath));
-  const unavailable = !turnId ? '旧记录缺少本轮标识' : files.some(file => !file.rollback) ? (files.find(file=>file.undoUnavailable)?.undoUnavailable || '旧记录没有完整撤销快照') : '';
+  const unavailable = !turnId ? '旧记录缺少本轮标识' : files.some(file => !(file.rollback || file.hasRollback)) ? (files.find(file=>file.undoUnavailable)?.undoUnavailable || '旧记录没有完整撤销快照') : '';
   undo.disabled = allUndone || !!unavailable;
   undo.title = allUndone ? '本轮修改已撤销' : unavailable || '恢复本轮修改前的文件；后续修改会触发冲突保护';
   if (allUndone) { undo.textContent = '已撤销'; status.textContent = '文件已恢复'; }
@@ -3573,14 +3621,30 @@ function renderFileChange(host, change) {
   if (card) card.remove();
   card = document.createElement('div');
   card.className = 'file-change-card';
-  const before = String(change.before || '').split(/\r?\n/);
-  const after = String(change.after || '').split(/\r?\n/);
-  const oldLines = before.map((line) => `<div class="diff-line diff-removed"><span>-</span>${escapeHtml(line)}</div>`).join('');
-  const newLines = after.map((line) => `<div class="diff-line diff-added"><span>+</span>${escapeHtml(line)}</div>`).join('');
-  card.innerHTML = `<div class="file-change-header"><button type="button" class="file-change-path" title="打开文件">已编辑 ${escapeHtml(change.path)}</button><b class="diff-add">+${Number(change.added) || 0}</b><b class="diff-del">-${Number(change.removed) || 0}</b><button type="button" class="file-change-review">审查</button></div><div class="file-change-diff" hidden>${oldLines}${newLines}</div>`;
+  // Long sessions can hold dozens of edit cards; restoring or streaming a task
+  // must never block on thousands of diff rows. Build the rows lazily on first
+  // expand and cap each side — the full change stays reviewable in the file.
+  const MAX_DIFF_LINES = 240;
+  const diff = document.createElement('div');
+  diff.className = 'file-change-diff';
+  diff.hidden = true;
+  diff.dataset.built = '0';
+  const buildDiff = () => {
+    if (diff.dataset.built === '1') return;
+    diff.dataset.built = '1';
+    const before = String(change.before || '').split(/\r?\n/);
+    const after = String(change.after || '').split(/\r?\n/);
+    const oldLines = before.slice(0, MAX_DIFF_LINES).map((line) => `<div class="diff-line diff-removed"><span>-</span>${escapeHtml(line)}</div>`).join('');
+    const newLines = after.slice(0, MAX_DIFF_LINES).map((line) => `<div class="diff-line diff-added"><span>+</span>${escapeHtml(line)}</div>`).join('');
+    const truncated = before.length > MAX_DIFF_LINES || after.length > MAX_DIFF_LINES;
+    const note = truncated ? `<div class="diff-line diff-note">… 仅显示前后各前 ${MAX_DIFF_LINES} 行，完整差异请打开文件查看</div>` : '';
+    diff.innerHTML = oldLines + newLines + note;
+  };
+  card.innerHTML = `<div class="file-change-header"><button type="button" class="file-change-path" title="打开文件">已编辑 ${escapeHtml(change.path)}</button><b class="diff-add">+${Number(change.added) || 0}</b><b class="diff-del">-${Number(change.removed) || 0}</b><button type="button" class="file-change-review">审查</button></div>`;
+  card.appendChild(diff);
   card.querySelector('.file-change-review').addEventListener('click', (e) => {
-    const diff = card.querySelector('.file-change-diff');
     diff.hidden = !diff.hidden;
+    if (!diff.hidden) buildDiff();
     e.currentTarget.textContent = diff.hidden ? '审查' : '收起';
   });
   card.querySelector('.file-change-path').addEventListener('click', () => {
@@ -3621,9 +3685,13 @@ function normalizeRenderedAssets(contentEl) {
   });
 }
 
-function renderMessageUsage(usageEl, inputTokens, outputTokens) {
+function renderMessageUsage(usageEl, inputTokens, outputTokens, cacheReadTokens) {
   const input = Number(inputTokens) || 0;
   const output = Number(outputTokens) || 0;
+  const cacheRead = Number(cacheReadTokens);
+  const cacheMarkup = cacheReadTokens !== undefined && cacheReadTokens !== null && Number.isFinite(cacheRead)
+    ? `<i aria-hidden="true"></i><span>${Math.max(0, Math.round(cacheRead)).toLocaleString()} <em>缓存</em></span>`
+    : '';
   const messageEl = usageEl.closest('.message.assistant');
   const timestamp = Number(messageEl && messageEl.dataset.timestamp);
   const timeText = formatMessageTimestamp(timestamp);
@@ -3638,33 +3706,7 @@ function renderMessageUsage(usageEl, inputTokens, outputTokens) {
     </svg>
     <span>${input.toLocaleString()} <em>入</em></span>
     <i aria-hidden="true"></i>
-    <span>${output.toLocaleString()} <em>出</em></span>${timeMarkup}`;
-}
-
-function renderPendingMessageUsage(messageEl) {
-  if (!messageEl) return;
-  const inputTokens = Number(messageEl.dataset.usageInputTokens);
-  const outputTokens = Number(messageEl.dataset.usageOutputTokens);
-  if (!Number.isFinite(inputTokens) && !Number.isFinite(outputTokens)) return;
-  let usageEl = messageEl.querySelector('.message-usage');
-  if (!usageEl) {
-    usageEl = document.createElement('div');
-    usageEl.className = 'message-usage';
-    const footer = messageEl.querySelector('.assistant-message-footer');
-    const actions = messageEl.querySelector('.assistant-message-actions');
-    if (footer && actions) footer.insertBefore(usageEl, actions); else messageEl.appendChild(usageEl);
-  }
-  renderMessageUsage(usageEl, Number.isFinite(inputTokens) ? inputTokens : 0, Number.isFinite(outputTokens) ? outputTokens : 0);
-  delete messageEl.dataset.usageInputTokens;
-  delete messageEl.dataset.usageOutputTokens;
-}
-
-function handleUsage(usage) {
-  // Usage can arrive before the terminal event. Keep it on the live message,
-  // but reveal the footer only after this turn has actually completed.
-  if (!currentAssistantMsg) return;
-  currentAssistantMsg.dataset.usageInputTokens = String(Number(usage?.inputTokens) || 0);
-  currentAssistantMsg.dataset.usageOutputTokens = String(Number(usage?.outputTokens) || 0);
+    <span>${output.toLocaleString()} <em>出</em></span>${cacheMarkup}${timeMarkup}`;
 }
 
 function formatContextTokens(tokens) {
@@ -3734,7 +3776,7 @@ function renderTokenUsage() {
         <div><span>输入</span><strong>${formatUsageNumber(input)}</strong></div>
         <div><span>输出</span><strong>${formatUsageNumber(output)}</strong></div>
         <div><span>调用次数</span><strong>${Number(r.requests || 0).toLocaleString()}</strong></div>
-        ${cache ? `<div><span>缓存</span><strong>${formatUsageNumber(cache)}</strong></div>` : ''}
+        <div><span>缓存</span><strong>${formatUsageNumber(cache)}</strong></div>
       </div>
       <div class="token-usage-model-time">费用估算：${formatEstimatedCost(r.estimatedCostUsd)} · 最近更新：${r.updatedAt ? new Date(r.updatedAt).toLocaleString() : '—'}</div>
     </div>`;
@@ -3761,7 +3803,7 @@ function handleUsage(usage) {
       const actions = currentAssistantMsg.querySelector('.assistant-message-actions');
       if (footer && actions) footer.insertBefore(usageEl, actions); else currentAssistantMsg.appendChild(usageEl);
     }
-    renderMessageUsage(usageEl, usage.inputTokens || 0, usage.outputTokens || 0);
+    renderMessageUsage(usageEl, usage.inputTokens || 0, usage.outputTokens || 0, usage.cacheReadInputTokens);
   }
   // The server has already persisted this receipt; reload immediately for live totals.
   loadTokenUsage();
@@ -3818,7 +3860,6 @@ function handleDone(stopReason, turnToken) {
 
   if (currentAssistantMsg) {
     finalizeAssistantMessage(currentAssistantMsg);
-    renderPendingMessageUsage(currentAssistantMsg);
     if (stopReason === 'maxTokens') {
       const notice = document.createElement('div');
       notice.className = 'error-message stream-limit-notice';
@@ -3851,6 +3892,7 @@ function handleDone(stopReason, turnToken) {
 function handleCancelled(turnToken) {
   if (turnToken != null && turnToken !== activeChatTurnToken) return;
   window.IexaPermissionDialog.closeSession?.(currentSessionId);
+  window.IexaQuestionCard?.disableForSession?.(currentSessionId, 'cancelled');
   const followLatest = shouldFollowLatestMessage();
   const preserveScrollTop = visibleChatMessages.scrollTop;
   const preserveScroll = !followLatest;
@@ -5430,11 +5472,6 @@ function updateEditorPlaceholders() {
   document.getElementById('profileEditorApiModeHint').textContent = isAnthropic
     ? 'Anthropic 原生 Messages 协议；服务商选 Anthropic 时自动使用 /v1/messages。'
     : 'Responses 使用独立的消息、工具和流式事件协议；仅在端点实际支持时选择。';
-}
-
-function formatContextTokensForDisplay(tokens) {
-  if (!tokens || tokens < 1000) return String(tokens);
-  return (tokens / 1000).toFixed(tokens >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'K';
 }
 
 function formatContextTokensForDisplay(tokens) {

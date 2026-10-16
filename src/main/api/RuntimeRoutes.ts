@@ -2,6 +2,7 @@ import * as http from 'http';
 import { URL } from 'url';
 import { jsonReply, readBody } from './HttpServer';
 import { PermissionBroker, PermissionDecision, PermissionMode } from '../security/PermissionManager';
+import { QuestionBroker, PendingQuestion } from '../runtime/QuestionBroker';
 
 interface RuntimeAgent {
   getState(): unknown;
@@ -14,6 +15,8 @@ export interface RuntimeRoutesContext {
   agents: Map<string, RuntimeAgent>;
   permissionBroker: PermissionBroker;
   permissionPayload(item: Parameters<RuntimeRoutesContext['permissionBroker']['list']>[0] extends never ? never : any): Record<string, unknown>;
+  questionBroker: QuestionBroker;
+  questionPayload(item: PendingQuestion): Record<string, unknown>;
   getPermissionMode(): PermissionMode;
   setPermissionMode(mode: PermissionMode): void;
   normalizePermissionMode(value: unknown): PermissionMode;
@@ -84,6 +87,41 @@ export async function handleRuntimeRoute(req: http.IncomingMessage, res: http.Se
     } catch (error: unknown) { jsonReply(res, 400, { error: (error as Error).message || '权限请求无效。' }); }
     return true;
   }
+  if (url.pathname === '/api/questions' && req.method === 'GET') {
+    const sessionId = url.searchParams.get('sessionId') || undefined;
+    jsonReply(res, 200, { questions: context.questionBroker.list(sessionId).map(context.questionPayload) });
+    return true;
+  }
+  if (url.pathname === '/api/questions/answer' && req.method === 'POST') {
+    try {
+      const parsed = JSON.parse(await readBody(req));
+      const id = String(parsed.id || parsed.requestId || '');
+      const rawAnswers = Array.isArray(parsed.answers) ? parsed.answers : [];
+      const answers = rawAnswers.map((item: unknown) => {
+        const record = (item || {}) as Record<string, unknown>;
+        const freeText = typeof record.freeText === 'string' ? record.freeText.slice(0, 4000) : undefined;
+        return {
+          id: String(record.id || ''),
+          selected: Array.isArray(record.selected) ? record.selected.map((value) => String(value).slice(0, 200)).slice(0, 24) : [],
+          freeText: freeText && freeText.trim() ? freeText : undefined,
+          skipped: record.skipped === true,
+        };
+      }).filter((answer: { id: string }) => answer.id);
+      if (!id || !answers.length) jsonReply(res, 400, { error: '回答数据无效。' });
+      else if (!context.questionBroker.resolve(id, answers)) jsonReply(res, 404, { error: '提问不存在或已结束。' });
+      else jsonReply(res, 200, { ok: true, id });
+    } catch (error: unknown) { jsonReply(res, 400, { error: (error as Error).message || '回答提交失败。' }); }
+    return true;
+  }
+  if (url.pathname === '/api/questions/cancel' && req.method === 'POST') {
+    try {
+      const parsed = JSON.parse(await readBody(req));
+      const id = String(parsed.id || parsed.requestId || '');
+      if (!id || !context.questionBroker.resolve(id, null)) jsonReply(res, 404, { error: '提问不存在或已结束。' });
+      else jsonReply(res, 200, { ok: true, id });
+    } catch (error: unknown) { jsonReply(res, 400, { error: (error as Error).message || '取消失败。' }); }
+    return true;
+  }
   if (url.pathname === '/api/permissions/grant' && req.method === 'POST') {
     try {
       const parsed = JSON.parse(await readBody(req));
@@ -103,6 +141,7 @@ export async function handleRuntimeRoute(req: http.IncomingMessage, res: http.Se
     if (sessionId) {
       context.cancelSession(sessionId);
       context.permissionBroker.cancelSession(sessionId);
+      context.questionBroker.cancelSession(sessionId);
       // Acknowledgement is a stop request, not proof that the executor has settled.
       context.cancelLiveJobs(sessionId, false);
     }

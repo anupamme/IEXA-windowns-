@@ -10,7 +10,7 @@ function create(t){
   ensureAssistantMessage:()=>w.currentAssistantMsg,assistantFooterAnchor:msg=>msg.querySelector('.assistant-message-footer'),scrollToBottom:()=>{},shouldFollowLatestMessage:()=>true,snapshotActiveSessionRuntime:()=>{},withSessionRuntime:(_s,fn)=>fn(),
   uiIcon:name=>`<svg class="ui-icon"><use href="#ui-${name}"/></svg>`,escapeHtml:value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'),
   thinkingEffortLabelFor:()=> '标准',normalizeThinkingLevel:value=>value,updateThinkingTokenCount:()=>{},stabilizeThinkingBlockWidth:()=>{},toolKind:()=> 'file',toolIcon:()=>'',toolDisplayName:name=>name,toolMeta:()=>'',toolLiveTitle:name=>name,
-  beginTaskSummary:()=>{},updateTaskSummary:()=>{},createTaskSummary:()=>{const n=w.document.createElement('button');n.className='task-summary';return n;},
+  beginTaskSummary:()=>{},updateTaskSummary:()=>{},refreshToolGroupSummary:()=>{},createTaskSummary:()=>{const n=w.document.createElement('button');n.className='task-summary';return n;},
   renderMarkdownContent:(node,text)=>{node._markdownSource=text;node.textContent=text;},setPagedText:(node,text)=>{node._fullText=String(text);node.textContent=text;},
  });
  w.pendingStreamUpdates = new Map();

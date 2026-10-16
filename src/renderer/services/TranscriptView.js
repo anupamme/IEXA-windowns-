@@ -51,7 +51,6 @@
         : item.type === 'text' ? factories.text(String(message.content || '').slice(item.start, item.end), item)
         : factories.thinking(String(message.thinking || '').slice(item.start, item.end), item) }));
     } catch { element.dataset.transcriptState = 'render-error'; return false; }
-    const old = [...element.children].filter(node => node.matches(contentSelector));
     const fragment = document.createDocumentFragment();
     for (const { item, node } of prepared) {
       node.dataset.activityId = item.id;
@@ -65,6 +64,9 @@
         group.appendChild(node);
       } else fragment.appendChild(node);
     }
+    // Capture leftovers only after adopted groups moved into the fragment:
+    // removing a group that was reused would drop its first tool row.
+    const old = [...element.children].filter(node => node.matches(contentSelector));
     old.forEach(node => node.remove());
     append(element, fragment);
     element.dataset.transcriptState = 'ordered'; element.dataset.transcriptTurnId = message.transcript.turnId;
