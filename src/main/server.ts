@@ -9,6 +9,7 @@ import { SubAgentManager } from './runtime/SubAgentManager';
 // IEXA PC - HTTP Server (multi-model profiles)
 // =============================================================================
 
+import { gzipSync } from 'zlib';
 import * as http from 'http';
 import * as https from 'https';
 import * as fs from 'fs';
@@ -74,6 +75,44 @@ const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 /** App data dir (sessions / settings / memory) — always under iexa workspace */
 const WORKSPACE_DIR = (() => { const root = path.resolve(process.env.IEXA_WORKSPACE || path.join(process.cwd(), 'workspace')); fs.mkdirSync(root, { recursive: true }); return fs.realpathSync.native(root); })();
 const CHECKPOINTS = new CheckpointStore(path.join(WORKSPACE_DIR, '.iexa-checkpoints'));
+const DIAGNOSTICS_DIR = path.join(WORKSPACE_DIR, '.iexa-diagnostics');
+const APP_VERSION = (() => {
+  try { return String(JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf8')).version || 'unknown'); }
+  catch { return 'unknown'; }
+})();
+
+/** Aggregated, secret-free runtime snapshot for troubleshooting. */
+function diagnosticsSnapshot(): Record<string, unknown> {
+  const metrics: Record<string, number> = {};
+  for (const agent of agentCache.values()) {
+    let snapshot: Record<string, number> = {};
+    try { snapshot = agent.getObservability().metrics; } catch { continue; }
+    for (const [key, value] of Object.entries(snapshot)) metrics[key] = (metrics[key] || 0) + Number(value || 0);
+  }
+  let sessions = 0;
+  try { sessions = loadSessionStore().sessions.length; } catch { /* optional */ }
+  let profiles = 0;
+  try { profiles = loadSettings().profiles.length; } catch { /* optional */ }
+  let plugins = 0;
+  try { plugins = pluginManager.list().length; } catch { /* optional */ }
+  let crashDumps: string[] = [];
+  const crashDir = process.env.IEXA_CRASH_DIR || '';
+  if (crashDir) {
+    try { crashDumps = fs.readdirSync(crashDir).slice(0, 50); } catch { /* no dumps */ }
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: 'IEXA-WIN', version: APP_VERSION,
+      electron: process.versions.electron || null, node: process.versions.node,
+      chrome: process.versions.chrome || null, platform: process.platform, arch: process.arch,
+    },
+    scope: { workspace: WORKSPACE_DIR, project: getProjectRoot() || null },
+    counts: { sessions, profiles, plugins, activeAgents: agentCache.size },
+    metrics,
+    crash: { directory: crashDir || null, dumps: crashDumps },
+  };
+}
 const MEMORY_DIR = path.join(WORKSPACE_DIR, '.iexa-memory');
 const SETTINGS_FILE = path.join(WORKSPACE_DIR, '.iexa-settings.json');
 const SESSIONS_FILE = path.join(WORKSPACE_DIR, '.iexa-sessions.json');
@@ -1230,6 +1269,8 @@ function routeAllowedForDevice(device: MobileBridgeDevice, url: URL, method: str
     || pathname === '/api/jobs'
     || pathname === '/api/checkpoints'
     || pathname === '/api/checkpoints/rewind'
+    || pathname === '/api/diagnostics'
+    || pathname === '/api/diagnostics/export'
     || pathname.startsWith('/api/attachments/')
     || pathname.startsWith('/api/artifacts/')
     || pathname === '/api/uploads/init'
@@ -1810,6 +1851,24 @@ function createServer(auth: LocalApiAuth): http.Server {
     // GET /api/sessions/:id — load messages
     // PUT /api/sessions/:id — rename
     // PATCH /api/sessions/:id — archive / restore
+    // GET /api/diagnostics — secret-free snapshot; POST /api/diagnostics/export — gzip bundle
+    if (url.pathname === '/api/diagnostics' && req.method === 'GET') {
+      try { jsonReply(res, 200, diagnosticsSnapshot()); }
+      catch (error: unknown) { jsonReply(res, 500, { error: (error as Error).message || '读取诊断信息失败。' }); }
+      return;
+    }
+    if (url.pathname === '/api/diagnostics/export' && req.method === 'POST') {
+      try {
+        const snapshot = diagnosticsSnapshot();
+        fs.mkdirSync(DIAGNOSTICS_DIR, { recursive: true });
+        const target = path.join(DIAGNOSTICS_DIR, `diagnostics-${Date.now()}.json.gz`);
+        const payload = gzipSync(Buffer.from(JSON.stringify(snapshot, null, 2), 'utf8'));
+        fs.writeFileSync(target, payload);
+        jsonReply(res, 200, { ok: true, path: target, bytes: payload.length, generatedAt: snapshot.generatedAt });
+      } catch (error: unknown) { jsonReply(res, 500, { error: (error as Error).message || '导出诊断包失败。' }); }
+      return;
+    }
+
     // GET /api/checkpoints?sessionId= — list; POST /api/checkpoints/rewind — restore
     if (url.pathname === '/api/checkpoints' && req.method === 'GET') {
       const sessionId = url.searchParams.get('sessionId') || '';

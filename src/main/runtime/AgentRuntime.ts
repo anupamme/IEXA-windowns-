@@ -65,7 +65,7 @@ export class AgentRuntime {
       onToolState: (event) => { this.trace.event('tool_state', { ...event }); request.callbacks.onToolState?.(event); },
       onTurnStart: (turn) => { this.trace.event('turn_started', { turn }); this.metrics.increment('turns_started'); this.state = { ...this.state, turn, updatedAt: Date.now(), budget: this.budget.snapshot() }; request.callbacks.onTurnStart?.(turn); },
       onToolExecutionStart: (id, name, args) => { this.trace.event('tool_started', { id, name, args }); this.metrics.increment('tools_started'); this.state = { ...this.state, toolCalls: this.state.toolCalls + 1, currentTool: { id, name }, updatedAt: Date.now(), budget: this.budget.snapshot() }; request.callbacks.onToolExecutionStart?.(id, name, args); },
-      onToolResult: (id, result) => { this.trace.event('tool_finished', { id, success: result.success, durationMs: result.durationMs }); this.metrics.increment(result.success ? 'tools_succeeded' : 'tools_failed'); request.callbacks.onToolResult(id, result); },
+      onToolResult: (id, result) => { this.trace.event('tool_finished', { id, success: result.success, durationMs: result.durationMs }); this.metrics.increment(result.success ? 'tools_succeeded' : 'tools_failed'); if (typeof result.durationMs === 'number') this.metrics.observe('tool_duration_ms', result.durationMs); request.callbacks.onToolResult(id, result); },
       onRetry: (attempt, delayMs, error) => { this.trace.event('retry', { attempt, delayMs, error }); this.metrics.increment('retries'); request.callbacks.onRetry?.(attempt, delayMs, error); },
       onUsage: (usage) => { this.costs.record(usage); this.metrics.increment('provider_calls'); this.trace.event('provider_usage', { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadInputTokens != null ? { cacheReadInputTokens: usage.cacheReadInputTokens } : {}) }); request.callbacks.onUsage(usage); },
       onDone: (reason) => { this.metrics.increment('runs_completed'); this.trace.event('run_completed', { reason }); terminal = () => { this.finish('completed'); request.callbacks.onDone(reason); }; }, onError: (error) => { this.metrics.increment('runs_failed'); this.trace.event('run_failed', { error }); terminal = () => { this.finish('failed'); request.callbacks.onError(error); }; }, onCancelled: () => { this.metrics.increment('runs_cancelled'); this.trace.event('run_cancelled'); terminal = () => { this.finish('cancelled'); request.callbacks.onCancelled(); }; },
@@ -103,6 +103,7 @@ export class AgentRuntime {
   seedHistoryFromChat(...args: Parameters<AgentLoop['seedHistoryFromChat']>): void { this.loop.seedHistoryFromChat(...args); }
   private finish(status: AgentState['status']): void {
     this.state = { ...this.state, status, currentTool: undefined, updatedAt: Date.now(), budget: this.budget.snapshot() };
+    try { this.trace.event('metrics_snapshot', this.metrics.snapshot()); } catch { /* metrics must not change completion */ }
     try { this.traceStore?.append(this.config.sessionId, this.trace.since(this.traceOffset)); } catch { /* Trace persistence must not change agent completion. */ }
   }
 }

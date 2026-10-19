@@ -44,6 +44,7 @@ const rendererActions = Object.freeze({
   deleteTokenUsage: (value) => deleteTokenUsage(value),
   clearTokenUsage: () => clearTokenUsage(),
   rewindCheckpoint: (value) => rewindCheckpoint(value),
+  exportDiagnostics: () => exportDiagnostics(),
   stop: () => {},
 });
 document.addEventListener('click', (event) => {
@@ -3752,6 +3753,20 @@ function handleContextStatus(context) {
 let tokenUsageRecords = [];
 
 let checkpointOpen = false;
+
+async function exportDiagnostics() {
+  const target = document.getElementById('diagnosticsResult');
+  if (target) target.textContent = '正在导出…';
+  try {
+    const response = await fetch(`${API_BASE}/api/diagnostics/export`, { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '导出失败');
+    const size = Math.max(1, Math.round(Number(data.bytes) / 1024));
+    if (target) target.textContent = `已导出：${data.path}（${size} KB）`;
+  } catch (error) {
+    if (target) target.textContent = `导出失败：${error.message || String(error)}`;
+  }
+}
 
 function formatCheckpointTime(value) {
   const date = new Date(Number(value) || 0);

@@ -3,7 +3,7 @@
 // Native desktop window using the local agent server
 // =============================================================================
 
-const { app, BrowserWindow, shell, dialog, Tray, Menu, nativeImage, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, shell, dialog, Tray, Menu, nativeImage, ipcMain, screen, session, crashReporter } = require('electron');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -29,8 +29,14 @@ function findFreePort() {
   });
 }
 
-let PORT = null;
-let mainWindow = null;
+// Local-only crash collection: dumps stay on this machine and are listed by the
+// diagnostics export. Nothing is uploaded.
+try {
+  crashReporter.start({ productName: 'IEXA-WIN', companyName: 'IEXA', uploadToServer: false, compress: true });
+  process.env.IEXA_CRASH_DIR = app.getPath('crashDumps');
+} catch { /* crash reporting is best-effort and must never block startup */ }
+
+let PORT = null;let mainWindow = null;
 let resizeMainWindow = null;
 let desktopLiveWindow = null;
 let server = null;

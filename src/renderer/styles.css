@@ -6277,3 +6277,11 @@ a:active > .ui-icon,
 }
 .checkpoint-restore:hover { border-color: var(--accent); color: var(--accent); }
 .checkpoint-empty { padding: 18px 12px; text-align: center; color: var(--text-muted); font-size: calc(.72rem * var(--ui-font-scale, 1)); }
+
+/* Diagnostics export result line on the About page. */
+.about-diagnostics-result {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: calc(.72rem * var(--ui-font-scale, 1));
+  word-break: break-all;
+}
