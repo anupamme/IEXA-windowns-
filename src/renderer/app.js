@@ -2664,7 +2664,9 @@ const TOOL_ICONS = {
 };
 
 function toolDisplayName(name) {
-  return TOOL_LABELS[name] || name;
+  const key = 'tool.' + name;
+  const translated = IexaI18n.t(key);
+  return translated === key ? (TOOL_LABELS[name] || name) : translated;
 }
 
 function toolIcon(name) {
@@ -3771,15 +3773,15 @@ let checkpointOpen = false;
 
 async function exportDiagnostics() {
   const target = document.getElementById('diagnosticsResult');
-  if (target) target.textContent = '正在导出…';
+  if (target) target.textContent = IexaI18n.t('diagnostics.exporting');
   try {
     const response = await fetch(`${API_BASE}/api/diagnostics/export`, { method: 'POST' });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || '导出失败');
+    if (!response.ok) throw new Error(data.error || 'export failed');
     const size = Math.max(1, Math.round(Number(data.bytes) / 1024));
-    if (target) target.textContent = `已导出：${data.path}（${size} KB）`;
+    if (target) target.textContent = IexaI18n.t('diagnostics.done', { path: data.path, size });
   } catch (error) {
-    if (target) target.textContent = `导出失败：${error.message || String(error)}`;
+    if (target) target.textContent = IexaI18n.t('diagnostics.failed', { message: error.message || String(error) });
   }
 }
 
@@ -3792,24 +3794,24 @@ function formatCheckpointTime(value) {
 async function renderCheckpoints() {
   const list = document.getElementById('checkpointList');
   if (!list) return;
-  if (!currentSessionId) { list.innerHTML = '<div class="checkpoint-empty">当前没有活动会话</div>'; return; }
-  list.innerHTML = '<div class="checkpoint-empty">加载中…</div>';
+  if (!currentSessionId) { list.innerHTML = `<div class="checkpoint-empty">${escapeHtml(IexaI18n.t('checkpoint.noSession'))}</div>`; return; }
+  list.innerHTML = `<div class="checkpoint-empty">${escapeHtml(IexaI18n.t('checkpoint.loading'))}</div>`;
   try {
     const response = await fetch(`${API_BASE}/api/checkpoints?sessionId=${encodeURIComponent(currentSessionId)}`, { cache: 'no-store' });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || '加载失败');
+    if (!response.ok) throw new Error(data.error || 'load failed');
     const items = Array.isArray(data.checkpoints) ? data.checkpoints : [];
-    if (!items.length) { list.innerHTML = '<div class="checkpoint-empty">本次会话还没有文件修改记录</div>'; return; }
+    if (!items.length) { list.innerHTML = `<div class="checkpoint-empty">${escapeHtml(IexaI18n.t('checkpoint.empty'))}</div>`; return; }
     list.innerHTML = items.map((item) => `
       <div class="checkpoint-row">
         <div class="checkpoint-meta">
-          <span class="checkpoint-label" title="${escapeHtml(item.label || '')}">${escapeHtml(item.label || '未命名请求')}</span>
-          <span class="checkpoint-sub">${formatCheckpointTime(item.createdAt)} · ${Number(item.changeCount) || 0} 个文件</span>
+          <span class="checkpoint-label" title="${escapeHtml(item.label || '')}">${escapeHtml(item.label || IexaI18n.t('checkpoint.unnamed'))}</span>
+          <span class="checkpoint-sub">${formatCheckpointTime(item.createdAt)} · ${escapeHtml(IexaI18n.t('checkpoint.files', { count: Number(item.changeCount) || 0 }))}</span>
         </div>
-        <button type="button" class="checkpoint-restore" data-ui-action="rewindCheckpoint" data-ui-arg="${escapeHtml(item.id)}">回到这里</button>
+        <button type="button" class="checkpoint-restore" data-ui-action="rewindCheckpoint" data-ui-arg="${escapeHtml(item.id)}">${escapeHtml(IexaI18n.t('checkpoint.restore'))}</button>
       </div>`).join('');
   } catch (error) {
-    list.innerHTML = `<div class="checkpoint-empty">加载失败：${escapeHtml(error.message || String(error))}</div>`;
+    list.innerHTML = `<div class="checkpoint-empty">${escapeHtml(IexaI18n.t('checkpoint.loadFailed', { message: error.message || String(error) }))}</div>`;
   }
 }
 
@@ -3824,7 +3826,7 @@ function setCheckpointOpen(open) {
 
 async function rewindCheckpoint(checkpointId) {
   if (!currentSessionId || !checkpointId) return;
-  const confirmed = await IexaDialogs.confirm('回退会撤销该检查点之后的所有文件修改；若文件已被其他程序改动，操作会中止并保留历史。');
+  const confirmed = await IexaDialogs.confirm(IexaI18n.t('checkpoint.confirm'));
   if (!confirmed) return;
   try {
     const response = await fetch(`${API_BASE}/api/checkpoints/rewind`, {
@@ -7829,12 +7831,12 @@ function initSkillsUI() {
 
 // ---- Slash menu: system commands first, then skills (typing aid only) ----
 const SLASH_COMMANDS = [
-  { command: 'help', description: '查看可用命令' },
-  { command: 'new', description: '新建会话' },
-  { command: 'model', description: '切换模型' },
-  { command: 'plan', description: '切换到只读规划模式' },
-  { command: 'rewind', description: '打开检查点与回退' },
-  { command: 'diagnostics', description: '导出诊断包' },
+  { command: 'help', key: 'slash.help' },
+  { command: 'new', key: 'slash.new' },
+  { command: 'model', key: 'slash.model' },
+  { command: 'plan', key: 'slash.plan' },
+  { command: 'rewind', key: 'slash.rewind' },
+  { command: 'diagnostics', key: 'slash.diagnostics' },
 ];
 
 function hideSlashMenu() {
@@ -7854,7 +7856,7 @@ async function runSlashCommand(command) {
   clearSlashTrigger();
   try {
     if (command === 'help') {
-      chatInput.value = SLASH_COMMANDS.map((item) => `/${item.command} — ${item.description}`).join('\n');
+      chatInput.value = SLASH_COMMANDS.map((item) => `/${item.command} — ${IexaI18n.t(item.key)}`).join('\n');
       chatInput.dispatchEvent(new Event('input'));
       return;
     }
@@ -7882,7 +7884,7 @@ function updateSlashMenu() {
   const enabled = (skillsCache || []).filter((s) => s.enabled !== false);
   const matchedCommands = SLASH_COMMANDS
     .filter((item) => !q || item.command.includes(q))
-    .map((item) => ({ kind: 'command', key: item.command, label: '/' + item.command, description: item.description }));
+    .map((item) => ({ kind: 'command', key: item.command, label: '/' + item.command, description: IexaI18n.t(item.key) }));
   const matchedSkills = enabled
     .filter((s) => {
       const name = (s.name || '').toLowerCase();
@@ -8155,7 +8157,7 @@ function syncPermissionModeUI() {
     button.setAttribute('aria-pressed', String(active));
   });
   const label = document.getElementById('permissionModeLabel');
-  if (label) label.textContent = permissionMode === 'full' ? '完全访问' : PERMISSION_MODE_LABELS[permissionMode];
+  if (label) label.textContent = IexaI18n.t('permission.' + permissionMode);
   const trigger = document.getElementById('permissionModeBtn');
   if (trigger) trigger.dataset.permissionMode = permissionMode;
   const wrap = document.getElementById('permissionModeWrap');
@@ -8403,19 +8405,19 @@ document.addEventListener('click', (event) => {
 
 // ---- Command palette (Ctrl/Cmd+K) ----
 const COMMAND_PALETTE_ACTIONS = [
-  { id: 'new-session', label: '新建任务', hint: 'Ctrl N', run: () => document.getElementById('newSessionBtn')?.click() },
-  { id: 'chat', label: '打开对话', run: () => document.querySelector('.nav-btn[data-view="chat"]')?.click() },
-  { id: 'skills', label: '打开技能', run: () => document.querySelector('.nav-btn[data-view="skills"]')?.click() },
-  { id: 'jobs', label: '打开任务中心', run: () => document.querySelector('.nav-btn[data-view="jobs"]')?.click() },
-  { id: 'mcp', label: '打开 MCP 服务', run: () => document.querySelector('.nav-btn[data-view="mcp"]')?.click() },
-  { id: 'plugins', label: '打开插件', run: () => document.querySelector('.nav-btn[data-view="plugins"]')?.click() },
-  { id: 'settings', label: '打开设置与扩展', run: () => document.querySelector('.nav-btn[data-view="settings"]')?.click() },
-  { id: 'appearance', label: '打开外观设置', run: () => document.querySelector('.nav-btn[data-view="appearance"]')?.click() },
-  { id: 'token-usage', label: '打开 Token 用量', run: () => document.querySelector('.nav-btn[data-view="token-calculator"]')?.click() },
-  { id: 'checkpoints', label: '检查点与回退', run: () => setCheckpointOpen(true) },
-  { id: 'plan', label: '切换到只读规划模式', run: () => setPermissionMode('plan') },
-  { id: 'risk', label: '切换到帮我批准', run: () => setPermissionMode('risk') },
-  { id: 'diagnostics', label: '导出诊断包', run: () => exportDiagnostics() },
+  { id: 'new-session', key: 'palette.newSession', hint: 'Ctrl N', run: () => document.getElementById('newSessionBtn')?.click() },
+  { id: 'chat', key: 'palette.chat', run: () => document.querySelector('.nav-btn[data-view="chat"]')?.click() },
+  { id: 'skills', key: 'palette.skills', run: () => document.querySelector('.nav-btn[data-view="skills"]')?.click() },
+  { id: 'jobs', key: 'palette.jobs', run: () => document.querySelector('.nav-btn[data-view="jobs"]')?.click() },
+  { id: 'mcp', key: 'palette.mcp', run: () => document.querySelector('.nav-btn[data-view="mcp"]')?.click() },
+  { id: 'plugins', key: 'palette.plugins', run: () => document.querySelector('.nav-btn[data-view="plugins"]')?.click() },
+  { id: 'settings', key: 'palette.settings', run: () => document.querySelector('.nav-btn[data-view="settings"]')?.click() },
+  { id: 'appearance', key: 'palette.appearance', run: () => document.querySelector('.nav-btn[data-view="appearance"]')?.click() },
+  { id: 'token-usage', key: 'palette.tokenUsage', run: () => document.querySelector('.nav-btn[data-view="token-calculator"]')?.click() },
+  { id: 'checkpoints', key: 'palette.checkpoints', run: () => setCheckpointOpen(true) },
+  { id: 'plan', key: 'palette.plan', run: () => setPermissionMode('plan') },
+  { id: 'risk', key: 'palette.risk', run: () => setPermissionMode('risk') },
+  { id: 'diagnostics', key: 'palette.diagnostics', run: () => exportDiagnostics() },
 ];
 
 let commandPaletteItems = [];
@@ -8435,16 +8437,19 @@ function renderCommandPalette(query = '') {
   const list = document.getElementById('commandPaletteList');
   if (!list) return;
   const needle = query.trim().toLowerCase();
-  commandPaletteItems = COMMAND_PALETTE_ACTIONS.filter((item) =>
-    !needle || item.label.toLowerCase().includes(needle) || item.id.includes(needle));
+  commandPaletteItems = COMMAND_PALETTE_ACTIONS.filter((item) => {
+    if (!needle) return true;
+    const label = IexaI18n.t(item.key).toLowerCase();
+    return label.includes(needle) || item.id.includes(needle);
+  });
   commandPaletteIndex = 0;
   if (!commandPaletteItems.length) {
-    list.innerHTML = '<div class="command-palette-empty">没有匹配的命令</div>';
+    list.innerHTML = `<div class="command-palette-empty">${escapeHtml(IexaI18n.t('palette.empty'))}</div>`;
     return;
   }
   list.innerHTML = commandPaletteItems.map((item, index) => `
     <button type="button" class="command-palette-item${index === 0 ? ' active' : ''}" role="option" data-id="${escapeHtml(item.id)}">
-      <span class="command-palette-label">${escapeHtml(item.label)}</span>
+      <span class="command-palette-label">${escapeHtml(IexaI18n.t(item.key))}</span>
       ${item.hint ? `<span class="command-palette-hint">${escapeHtml(item.hint)}</span>` : ''}
     </button>`).join('');
   list.querySelectorAll('.command-palette-item').forEach((button) => {
@@ -8505,6 +8510,21 @@ function initCommandPalette() {
 }
 
 initCommandPalette();
+
+// ---- UI locale ----
+IexaI18n.init();
+IexaI18n.apply(document);
+const localeSelect = document.getElementById('localeSelect');
+if (localeSelect) {
+  localeSelect.value = IexaI18n.getLocale();
+  localeSelect.addEventListener('change', () => {
+    IexaI18n.setLocale(localeSelect.value);
+    if (checkpointOpen) renderCheckpoints();
+    const paletteInput = document.getElementById('commandPaletteInput');
+    renderCommandPalette(paletteInput ? paletteInput.value : '');
+    syncPermissionModeUI();
+  });
+}
   initHtmlPreview();
   initMobileBridge();
   initTextContextMenu();

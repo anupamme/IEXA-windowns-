@@ -92,33 +92,33 @@
           <span class="version" id="sysVersion">Windows</span>
         </div>
       </div>
-      <button type="button" class="shell-new-thread" id="shellNewThread"><svg class="ui-icon" aria-hidden="true"><use href="#ui-edit"/></svg><span>新建任务</span><kbd>Ctrl N</kbd></button>
+      <button type="button" class="shell-new-thread" id="shellNewThread"><svg class="ui-icon" aria-hidden="true"><use href="#ui-edit"/></svg><span data-i18n="nav.newTask">新建任务</span><kbd>Ctrl N</kbd></button>
     </div>
     <nav class="sidebar-nav" aria-label="工作区导航">
-      <div class="sidebar-primary"><button class="nav-btn active" data-view="chat"><svg class="ui-icon" aria-hidden="true"><use href="#ui-chat"/></svg><span>对话</span></button>
-<button class="nav-btn" data-view="skills"><svg class="ui-icon" aria-hidden="true"><use href="#ui-puzzle"/></svg><span>技能</span></button>
-<button class="nav-btn nav-btn-jobs" data-view="jobs"><svg class="ui-icon" aria-hidden="true"><use href="#ui-terminal"/></svg><span>任务中心</span><b class="nav-job-badge" id="navJobBadge" hidden>0</b></button></div>
+      <div class="sidebar-primary"><button class="nav-btn active" data-view="chat"><svg class="ui-icon" aria-hidden="true"><use href="#ui-chat"/></svg><span data-i18n="nav.chat">对话</span></button>
+<button class="nav-btn" data-view="skills"><svg class="ui-icon" aria-hidden="true"><use href="#ui-puzzle"/></svg><span data-i18n="nav.skills">技能</span></button>
+<button class="nav-btn nav-btn-jobs" data-view="jobs"><svg class="ui-icon" aria-hidden="true"><use href="#ui-terminal"/></svg><span data-i18n="nav.jobs">任务中心</span><b class="nav-job-badge" id="navJobBadge" hidden>0</b></button></div>
       <details class="sidebar-more" id="sidebarMore">
-        <summary><svg class="ui-icon" aria-hidden="true"><use href="#ui-settings"/></svg><span>设置与拓展</span></summary>
-        <div class="sidebar-secondary"><button class="nav-btn" data-view="appearance"><svg class="ui-icon" aria-hidden="true"><use href="#ui-palette"/></svg><span>外观</span></button>
-<button class="nav-btn" data-view="soul"><svg class="ui-icon" aria-hidden="true"><use href="#ui-brain"/></svg><span>灵魂</span></button>
+        <summary><svg class="ui-icon" aria-hidden="true"><use href="#ui-settings"/></svg><span data-i18n="nav.more">设置与拓展</span></summary>
+        <div class="sidebar-secondary"><button class="nav-btn" data-view="appearance"><svg class="ui-icon" aria-hidden="true"><use href="#ui-palette"/></svg><span data-i18n="nav.appearance">外观</span></button>
+<button class="nav-btn" data-view="soul"><svg class="ui-icon" aria-hidden="true"><use href="#ui-brain"/></svg><span data-i18n="nav.soul">灵魂</span></button>
 <button class="nav-btn nav-btn-token-usage" data-view="token-calculator">
         <svg class="nav-token-usage-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="4" y="12" width="3" height="7" rx="1" stroke="currentColor" stroke-width="1.8"/>
           <rect x="10.5" y="8" width="3" height="11" rx="1" stroke="currentColor" stroke-width="1.8"/>
           <rect x="17" y="4" width="3" height="15" rx="1" stroke="currentColor" stroke-width="1.8"/>
         </svg>
-        <span>Token 用量</span>
+        <span data-i18n="nav.tokenUsage">Token 用量</span>
       </button>
 <button class="nav-btn" data-view="mcp"><svg class="ui-icon" aria-hidden="true"><use href="#ui-puzzle"/></svg><span>MCP</span></button>
-<button class="nav-btn" data-view="plugins"><svg class="ui-icon" aria-hidden="true"><use href="#ui-box"/></svg><span>拓展</span></button>
-<button class="nav-btn" data-view="settings"><svg class="ui-icon" aria-hidden="true"><use href="#ui-settings"/></svg><span>配置</span></button>
+<button class="nav-btn" data-view="plugins"><svg class="ui-icon" aria-hidden="true"><use href="#ui-box"/></svg><span data-i18n="nav.plugins">拓展</span></button>
+<button class="nav-btn" data-view="settings"><svg class="ui-icon" aria-hidden="true"><use href="#ui-settings"/></svg><span data-i18n="nav.settings">配置</span></button>
 <button class="nav-btn" data-view="sync">
         <svg class="nav-device-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="3.5" y="4" width="17" height="12" rx="1.8" stroke="currentColor" stroke-width="1.7"/>
           <path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
         </svg>
-        <span>设备与桥接</span>
+        <span data-i18n="nav.sync">设备与桥接</span>
       </button>
 <button class="nav-btn" data-view="about">
         <svg class="nav-about-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -126,16 +126,16 @@
           <path d="M12 10.5v5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
           <circle cx="12" cy="7.3" r="1" fill="currentColor"/>
         </svg>
-        <span>关于</span>
+        <span data-i18n="nav.about">关于</span>
       </button></div>
       </details>
     </nav>
     <div class="sidebar-project">
       <div class="sidebar-section-header">
-        <span class="sidebar-section-label">项目</span>
+        <span class="sidebar-section-label" data-i18n="nav.projects">项目</span>
         <button type="button" class="ui-icon-button" id="shellAddProject" title="打开项目文件夹" aria-label="打开项目文件夹"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#ui-plus"/></svg></button>
       </div>
-      <button type="button" class="shell-project-button" id="shellProjectBtn" title="打开项目文件夹"><svg class="ui-icon" aria-hidden="true"><use href="#ui-folder"/></svg><span id="shellProjectName">打开项目文件夹</span><svg class="ui-icon project-row-chevron" aria-hidden="true"><use href="#ui-chevron-right"/></svg></button>
+      <button type="button" class="shell-project-button" id="shellProjectBtn" title="打开项目文件夹"><svg class="ui-icon" aria-hidden="true"><use href="#ui-folder"/></svg><span id="shellProjectName" data-i18n="nav.openProject">打开项目文件夹</span><svg class="ui-icon project-row-chevron" aria-hidden="true"><use href="#ui-chevron-right"/></svg></button>
     </div>
     <div class="sidebar-sessions">
       <div class="sessions-header">
@@ -149,7 +149,7 @@
         </button>
       </div>
       <div class="search-box">
-        <input type="text" id="searchInput" class="search-input" placeholder="搜索会话" aria-label="搜索会话">
+        <input type="text" id="searchInput" class="search-input" placeholder="搜索会话" aria-label="搜索会话" data-i18n-placeholder="search.sessions" data-i18n-aria="search.sessions">
         <button type="button" class="search-clear ui-icon-button" id="searchClear" title="清除搜索" style="display:none;" aria-label="清除搜索"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#ui-close"/></svg></button>
       </div>
       <div class="search-results" id="searchResults" style="display:none;"></div>
@@ -283,7 +283,7 @@
               <div class="checkpoint-wrap">
                 <button type="button" class="checkpoint-btn ui-icon-button" id="checkpointBtn" title="检查点与回退" aria-label="检查点与回退" aria-haspopup="dialog" aria-expanded="false"><svg class="ui-icon" aria-hidden="true"><use href="#ui-branch"/></svg></button>
                 <div class="checkpoint-popover" id="checkpointPopover" role="dialog" aria-label="检查点与回退" hidden>
-                  <div class="checkpoint-head"><strong>检查点</strong><button type="button" id="checkpointRefresh" class="checkpoint-refresh">刷新</button></div>
+                  <div class="checkpoint-head"><strong data-i18n="checkpoint.title">检查点</strong><button type="button" id="checkpointRefresh" class="checkpoint-refresh" data-i18n="checkpoint.refresh">刷新</button></div>
                   <div class="checkpoint-list" id="checkpointList"></div>
                 </div>
               </div>
@@ -430,6 +430,13 @@
     <!-- Models / Settings View -->
     <div class="view" id="view-settings">
       <div class="settings-container">
+        <div class="setting-group locale-setting">
+          <label for="localeSelect" data-i18n="locale.label">界面语言</label>
+          <select id="localeSelect">
+            <option value="zh-CN">简体中文</option>
+            <option value="en-US">English</option>
+          </select>
+        </div>
         <div class="settings-header">
           <h2>AI 模型</h2>
           <button type="button" class="btn-primary btn-sm button-with-icon" data-ui-action="showProfileEditor"><svg class="ui-icon" aria-hidden="true"><use href="#ui-plus"/></svg><span>添加模型</span></button>
@@ -833,9 +840,9 @@ version: 1.0.0
         </ul>
         <h3>技术栈</h3>
         <p>基于 TypeScript、Node.js 和原生 Web 技术构建，由 Electron 封装为原生桌面体验。</p>
-        <h3>诊断</h3>
-        <p>导出运行指标、版本信息与设备环境（不含密钥），便于排查问题。</p>
-        <button type="button" class="btn-secondary btn-sm" data-ui-action="exportDiagnostics">导出诊断包</button>
+        <h3 data-i18n="diagnostics.title">诊断</h3>
+        <p data-i18n="diagnostics.hint">导出运行指标、版本信息与设备环境（不含密钥），便于排查问题。</p>
+        <button type="button" class="btn-secondary btn-sm" data-ui-action="exportDiagnostics" data-i18n="diagnostics.export">导出诊断包</button>
         <p class="about-diagnostics-result" id="diagnosticsResult"></p>
         <p class="about-open-source">
           <svg class="ui-icon" aria-hidden="true"><use href="#ui-box"/></svg><span>开源地址：<a href="https://github.com/bidalu9-crypto/IEXA-windowns-" target="_blank">GitHub →</a></span>
@@ -847,7 +854,7 @@ version: 1.0.0
 
 <div class="command-palette" id="commandPalette" hidden role="dialog" aria-modal="true" aria-label="命令面板">
   <div class="command-palette-panel">
-    <input type="text" id="commandPaletteInput" class="command-palette-input" placeholder="输入命令，Enter 执行，Esc 关闭" autocomplete="off" aria-label="命令面板搜索">
+    <input type="text" id="commandPaletteInput" class="command-palette-input" placeholder="输入命令，Enter 执行，Esc 关闭" autocomplete="off" aria-label="命令面板搜索" data-i18n-placeholder="palette.placeholder">
     <div class="command-palette-list" id="commandPaletteList" role="listbox"></div>
   </div>
 </div>
@@ -931,6 +938,7 @@ version: 1.0.0
 <script src="vendor/highlight.min.js"></script>
 <script src="vendor/purify.min.js"></script>
 <script src="services/SafeMarkdown.js"></script>
+<script src="services/I18n.js"></script>
 <script src="services/ApiClient.js"></script>
 <script src="components/PermissionDialog.js"></script>
 <script src="components/QuestionCard.js"></script>
