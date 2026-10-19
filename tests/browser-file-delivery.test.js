@@ -46,6 +46,20 @@ test('real browser: edited-file card review, guarded undo, persistence and two t
   assert.equal(await evaluate("document.querySelector('.turn-deliverables-heading .diff-add').textContent"),'+50');
   assert.equal(await evaluate("document.querySelector('.turn-deliverables-heading .diff-del').textContent"),'−33');
   assert.equal(await evaluate("document.querySelector('.turn-change-undo').disabled"),false);
+  // The header is a disclosure: it collapses the file list but leaves the
+  // actions reachable, and the chevron/aria state follows.
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables-heading').tagName"),'BUTTON');
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables-heading').getAttribute('aria-expanded')"),'true');
+  await evaluate("document.querySelector('.turn-deliverables-heading').click()");
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables').classList.contains('is-collapsed')"),true);
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables-heading').getAttribute('aria-expanded')"),'false');
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.turn-deliverables-body')).display"),'none');
+  assert.equal(await evaluate("document.querySelector('.turn-change-undo').offsetParent!==null"),true);
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables').getBoundingClientRect().height<110"),true);
+  const collapsedShot=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(artifact,'file-summary-collapsed.png'),Buffer.from(collapsedShot.result.data,'base64'));
+  await evaluate("document.querySelector('.turn-deliverables-heading').click()");
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables').classList.contains('is-collapsed')"),false);
+  assert.equal(await evaluate("document.querySelectorAll('.turn-change-file').length"),2);
   // Keep task execution details collapsed, and show the summary exactly as the user sees it.
   for(const theme of ['light','dark']){
     await evaluate(`document.documentElement.dataset.theme='${theme}';document.querySelector('.turn-deliverables').scrollIntoView({block:'center'})`);
@@ -58,6 +72,13 @@ test('real browser: edited-file card review, guarded undo, persistence and two t
   assert.equal(await evaluate("document.querySelector('.turn-change-details').textContent.includes('updated28')"),true);
   assert.equal(await evaluate("document.querySelectorAll('.turn-change-details .diff-added').length"),50);
   const image=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(artifact,'file-review-dark.png'),Buffer.from(image.result.data,'base64'));
+  // Collapsing closes the diff; review from a collapsed card expands and opens it again.
+  await evaluate("document.querySelector('.turn-deliverables-heading').click()");
+  assert.equal(await evaluate("document.querySelector('.turn-change-details').hidden"),true);
+  assert.equal(await evaluate("document.querySelector('.turn-change-review').textContent"),'审查');
+  await evaluate("document.querySelector('.turn-change-review').click()");
+  assert.equal(await evaluate("document.querySelector('.turn-deliverables').classList.contains('is-collapsed')"),false);
+  assert.equal(await evaluate("document.querySelector('.turn-change-details').hidden"),false);
   await evaluate("document.querySelector('.turn-change-review').click();document.querySelector('.turn-change-undo').click()");
   await wait("!!document.querySelector('dialog[open]')");await evaluate("document.querySelector('dialog .btn-primary').click()");
   await wait("document.querySelector('.turn-change-undo').textContent==='已撤销'");

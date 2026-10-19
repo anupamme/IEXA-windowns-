@@ -3598,9 +3598,14 @@ function renderDeliverables(messageEl, files) {
   panel.setAttribute('aria-label', '本轮文件修改');
   const totals = unique.reduce((sum, file) => ({added: sum.added + (Number(file.added) || 0), removed: sum.removed + (Number(file.removed) || 0)}), {added:0, removed:0});
   const counts = file => `<span class="diff-add">+${Number(file.added) || 0}</span><span class="diff-del">−${Number(file.removed) || 0}</span>`;
-  const heading = document.createElement('div');
+  const heading = document.createElement('button');
+  heading.type = 'button';
   heading.className = 'turn-deliverables-heading';
-  heading.innerHTML = `${uiIcon('file')}<strong>已编辑 ${unique.length} 个文件</strong><span class="turn-change-counts">${counts(totals)}</span>`;
+  heading.setAttribute('aria-expanded', 'true');
+  const bodyId = `turn-deliverables-${Math.random().toString(36).slice(2, 9)}`;
+  heading.setAttribute('aria-controls', bodyId);
+  heading.title = '展开或收起文件列表';
+  heading.innerHTML = `${uiIcon('file')}<strong>已编辑 ${unique.length} 个文件</strong><span class="turn-change-counts">${counts(totals)}</span><span class="turn-deliverables-chevron" aria-hidden="true"></span>`;
   const filesEl = document.createElement('div');
   filesEl.className = 'turn-deliverable-files';
   for (const file of unique) {
@@ -3608,7 +3613,7 @@ function renderDeliverables(messageEl, files) {
     row.type = 'button'; row.className = 'turn-change-file'; row.title = file.path;
     row.innerHTML = `${uiIcon('file')}<span class="turn-deliverable-name">${escapeHtml(file.path)}</span><span class="turn-change-counts">${counts(file)}</span>`;
     row.setAttribute('aria-label', `审查文件：${file.path}`);
-    row.addEventListener('click', () => showReview(file));
+    row.addEventListener('click', () => { setCollapsed(false); showReview(file); });
     filesEl.appendChild(row);
   }
   const actions = document.createElement('div'); actions.className = 'turn-change-actions';
@@ -3645,9 +3650,12 @@ function renderDeliverables(messageEl, files) {
       }
       details.appendChild(section);
     }
-    details.hidden = false; review.setAttribute('aria-expanded','true');
+    details.hidden = false; setReviewOpen(true);
   }
-  review.addEventListener('click', () => { if(details.hidden)showReview();else {details.hidden=true;review.setAttribute('aria-expanded','false');} });
+  review.addEventListener('click', () => {
+    if (panel.classList.contains('is-collapsed')) { setCollapsed(false); showReview(); return; }
+    if (details.hidden) showReview(); else setReviewOpen(false);
+  });
   undo.addEventListener('click', async () => {
     if (sessionRuntimes.get(sessionId)?.isProcessing) {status.textContent='请等待该会话任务结束后撤销';return;}
     if (!(await window.IexaDialogs.confirm('撤销本轮文件修改？新建文件将删除，已有文件将恢复到本轮修改前。'))) return;
@@ -3660,8 +3668,27 @@ function renderDeliverables(messageEl, files) {
       undo.textContent = '已撤销'; status.textContent = '文件已恢复'; undo.title = '本轮修改已撤销';
     } catch (error) { status.textContent = error.message; undo.disabled=false; }
   });
-  actions.append(status,undo,review);
-  panel.append(heading,filesEl,actions,details);
+  const body = document.createElement('div');
+  body.className = 'turn-deliverables-body';
+  body.id = bodyId;
+  body.append(filesEl, details);
+
+  function setReviewOpen(open) {
+    details.hidden = !open;
+    review.setAttribute('aria-expanded', String(open));
+    review.textContent = open ? '收起' : '审查';
+  }
+  function setCollapsed(collapsed) {
+    panel.classList.toggle('is-collapsed', collapsed);
+    heading.setAttribute('aria-expanded', String(!collapsed));
+    messageEl._deliverablesCollapsed = collapsed;
+    if (collapsed) setReviewOpen(false);
+  }
+  heading.addEventListener('click', () => setCollapsed(!panel.classList.contains('is-collapsed')));
+
+  actions.append(status, undo, review);
+  panel.append(heading, body, actions);
+  setCollapsed(messageEl._deliverablesCollapsed === true);
 }
 
 async function openDeliverablePreview(path, absolutePath) {
