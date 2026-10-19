@@ -711,14 +711,32 @@ body {
   overflow: hidden;
 }
 
+/* Views stay mounted instead of being torn out of the tree. `display: none`
+   discards every descendant's computed style, so returning to a long
+   transcript re-styled and re-laid out tens of thousands of nodes (measured
+   ~160ms style + ~100ms layout on a 57-message history). `content-visibility:
+   hidden` keeps the subtree's styles and element state while skipping its
+   layout and paint; inactive views are taken out of flow so they cannot
+   reserve space. Hit-testing is removed with the `inert` attribute in the nav
+   handler rather than an inherited CSS property, which would force the very
+   subtree recalc this is avoiding. */
 .view {
-  display: none;
+  display: flex;
   flex: 1;
   overflow: hidden;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  content-visibility: hidden;
 }
 
 .view.active {
-  display: flex;
+  position: relative;
+  width: auto;
+  height: auto;
+  content-visibility: visible;
 }
 
 /* Chat layout: chat left + files right */
@@ -6015,9 +6033,12 @@ body {
 .streaming-markdown { overflow-wrap: anywhere; }
 .text-pager { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .text-pager button { color: inherit; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
-/* Keep transcript geometry real after startup. content-visibility:auto can
-   discard older message layout immediately after the anchor pass, changing
-   scrollHeight and snapping a freshly restored session back to the top. */
+/* Keep transcript geometry real. `content-visibility: auto` was measured as a
+   regression here: once the history renders in time-boxed batches it no longer
+   saves a frame (worst frame stayed at 280ms either way), but it collapses
+   scrollHeight from 164,656px to an estimate of 4,581px that grows as you
+   scroll up, so the scrollbar jumps. Real geometry is worth more than the
+   saved layout. */
 .message:not(.is-streaming) { content-visibility: visible; }
 .desktop-live-panel {
   position: fixed;

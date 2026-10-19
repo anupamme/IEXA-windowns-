@@ -226,6 +226,14 @@ function protectLiveTurnDom(sessionId = currentSessionId) {
   runtimeForSession(sessionId).liveTurnDomOwnedUntil = Date.now() + LIVE_TURN_DOM_OWNERSHIP_MS;
 }
 
+/** Number of transcript bubbles currently mounted for a session. */
+function countRenderedMessages(sessionId) {
+  if (!sessionId) return 0;
+  if (sessionId === visibleSessionId) return visibleChatMessages.querySelectorAll('.message').length;
+  const runtime = sessionRuntimes.get(sessionId);
+  return runtime ? runtime.fragment.querySelectorAll('.message').length : 0;
+}
+
 function applySessionRuntime(sessionId) {
   const runtime = runtimeForSession(sessionId);
   isProcessing = !!runtime.isProcessing;
@@ -793,12 +801,19 @@ async function syncConversationMetadata(forceCurrentRefresh = false, forceSessio
       const runtime = sessionRuntimes.get(currentSessionId);
       const liveDomOwned = Boolean(runtime?.liveTurnDomOwnedUntil && runtime.liveTurnDomOwnedUntil > Date.now());
       const startupHistoryLocked = Boolean(runtime?.startupHistoryLockUntil && runtime.startupHistoryLockUntil > Date.now());
+      // The streamed DOM already holds every message the store knows about.
+      // Rebuilding it would re-parse the whole transcript and lay out tens of
+      // thousands of nodes for nothing, so compare counts instead of trusting
+      // a time window: a turn saved moments after it finished must not trigger
+      // a reload just because the window elapsed.
+      const storeCount = nextSessions.find(session => session.id === currentSessionId)?.messageCount;
+      const domMatchesStore = Number.isInteger(storeCount) && storeCount === countRenderedMessages(currentSessionId);
       if (startupHistoryLocked) {
         // Cold-start history is already mounted. Metadata changed/forced sync
         // must update the sidebar only; rebuilding this DOM would reset scroll
         // to zero before the anchor pass can run again.
         scrollHistoryToLatest(currentSessionId);
-      } else if (liveDomOwned) {
+      } else if (liveDomOwned || (!forceCurrentRefresh && domMatchesStore)) {
         // The streamed DOM already contains the server's completed turn. Keep
         // it mounted while consuming the new session metadata version.
       } else if (!runtime?.isProcessing && !isProcessing) await refreshCurrentSessionHistory(currentSessionId);
@@ -1152,6 +1167,7 @@ async function switchSession(id, updateList = true) {
     clearChat();
     targetRuntime.fragment.replaceChildren();
     targetRuntime.historyReady = true;
+    targetRuntime.historyRenderedCount = 0;
     const msgs = data.messages || [];
 
     // Refresh this session's pinned model metadata from the server.
@@ -1166,7 +1182,21 @@ async function switchSession(id, updateList = true) {
       showWelcome();
     } else {
       // Render messages
+      // A long history (hundreds of messages, thousands of tool blocks) used to
+      // be built in one synchronous pass: the browser then had to lay out the
+      // whole subtree before it could paint, freezing the window for seconds.
+      // Yield to the next frame once a batch exceeds the frame budget so the
+      // transcript paints progressively and stays interactive.
+      let batchStartedAt = performance.now();
       for (let messageIndex = 0; messageIndex < msgs.length; messageIndex++) {
+        if (performance.now() - batchStartedAt > 8) {
+          await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+          if (viewEpoch !== sessionViewEpoch || visibleSessionId !== id) {
+            targetRuntime.historyReady = false;
+            return;
+          }
+          batchStartedAt = performance.now();
+        }
         const msg = msgs[messageIndex];
         if (msg.role === 'user') {
           addMessage('user', msg.content, msg.attachments || [], { messageIndex, timestamp: msg.timestamp });
@@ -1264,6 +1294,7 @@ async function switchSession(id, updateList = true) {
           }
         }
       }
+      targetRuntime.historyRenderedCount = msgs.length;
     }
   } catch (err) {
     console.error('Failed to load messages:', err);
@@ -9213,9 +9244,12 @@ function initPanelResizers() {
       scheduleAppearanceSave();
     }
   };
+  // Normalising is a layout pass, not an edit: seeding the value that was just
+  // read back from storage would write a default on every load and race the
+  // first real drag.
   const normalize = () => {
-    apply('sidebar', sidebarWidth);
-    apply('files', filesWidth);
+    apply('sidebar', sidebarWidth, false);
+    apply('files', filesWidth, false);
   };
 
   normalize();
