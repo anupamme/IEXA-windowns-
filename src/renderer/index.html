@@ -868,9 +868,11 @@ version: 1.0.0
   </div>
 </div>
 
-<!-- Sandboxed in-app HTML effect preview -->
-<div class="html-preview-overlay" id="htmlPreviewOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="htmlPreviewTitle">
-  <section class="html-preview-window" id="htmlPreviewWindow">
+<!-- Sandboxed in-app HTML effect preview. The window floats above the app
+     without a scrim: it is a workspace pane, not a modal, so the conversation
+     stays readable and clickable while the document re-renders. -->
+<div class="html-preview-overlay" id="htmlPreviewOverlay" hidden role="dialog" aria-labelledby="htmlPreviewTitle">
+  <section class="html-preview-window" id="htmlPreviewWindow" tabindex="-1">
     <header class="html-preview-titlebar">
       <div class="html-preview-traffic" aria-label="窗口控制">
         <button type="button" class="html-preview-dot is-close" id="htmlPreviewClose" title="关闭预览" aria-label="关闭预览"></button>
@@ -892,6 +894,9 @@ version: 1.0.0
         <svg class="ui-icon" aria-hidden="true"><use href="#ui-file"/></svg>
         <span id="htmlPreviewAddress"></span>
       </div>
+      <button type="button" class="html-preview-live" id="htmlPreviewLive" aria-pressed="true" title="文件变化时自动重新渲染">
+        <i aria-hidden="true"></i><span id="htmlPreviewLiveLabel">实时</span>
+      </button>
       <div class="html-preview-viewports" role="group" aria-label="预览画布尺寸">
         <button type="button" data-preview-viewport="desktop" class="is-active" title="桌面视图" aria-label="桌面视图" aria-pressed="true"><svg class="ui-icon"><use href="#ui-monitor"/></svg></button>
         <button type="button" data-preview-viewport="tablet" title="平板视图" aria-label="平板视图" aria-pressed="false"><svg class="ui-icon"><use href="#ui-tablet"/></svg></button>
@@ -900,13 +905,20 @@ version: 1.0.0
     </div>
     <div class="html-preview-stage" id="htmlPreviewStage" data-viewport="desktop">
       <div class="html-preview-canvas" id="htmlPreviewCanvas">
-        <iframe id="htmlPreviewFrame" title="HTML 效果预览" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe>
+        <iframe id="htmlPreviewFrame" class="is-active" title="HTML 效果预览" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe>
+        <!-- Second surface for double buffering: the next render loads here,
+             stays transparent until it is ready, and only then swaps in, so a
+             live update never flashes an empty white page. -->
+        <iframe id="htmlPreviewFrameBack" title="HTML 效果预览（预载）" aria-hidden="true" tabindex="-1" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe>
         <div class="html-preview-loading" id="htmlPreviewLoading"><span></span><b>正在渲染</b></div>
       </div>
     </div>
     <footer class="html-preview-statusbar">
       <span class="html-preview-ready"><i aria-hidden="true"></i><span id="htmlPreviewStatus">就绪</span></span>
-      <span id="htmlPreviewDimensions">自适应画布</span>
+      <span class="html-preview-meta">
+        <span class="html-preview-errors" id="htmlPreviewErrors" hidden></span>
+        <span id="htmlPreviewDimensions">自适应画布</span>
+      </span>
     </footer>
   </section>
 </div>

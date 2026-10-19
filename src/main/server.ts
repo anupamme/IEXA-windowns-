@@ -1186,6 +1186,78 @@ function applyPreviewIsolation(res: http.ServerResponse, extension: string): voi
     res.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
   }
 }
+
+/**
+ * Channel injected into live preview documents.
+ *
+ * The preview iframe is sandboxed with allow-scripts but deliberately without
+ * allow-same-origin, so the host page can never reach into it. That isolation
+ * is what makes previewing generated HTML safe, and it is also why the frame
+ * has to report its own scroll position and runtime errors: postMessage is the
+ * only thing that crosses the boundary. The parent never trusts this data for
+ * anything but presentation.
+ */
+const PREVIEW_RUNTIME = `<script data-iexa-runtime="1">
+(function () {
+  if (window.__iexaPreviewRuntime) return;
+  window.__iexaPreviewRuntime = 1;
+  function send(message) {
+    message.__iexaPreview = 1;
+    try { parent.postMessage(message, '*'); } catch (error) { /* frame is gone */ }
+  }
+  function report(type) {
+    send({
+      type: type,
+      title: document.title || '',
+      scrollY: window.scrollY || window.pageYOffset || 0,
+      height: document.documentElement ? document.documentElement.scrollHeight : 0,
+    });
+  }
+  var queued = 0;
+  window.addEventListener('scroll', function () {
+    if (queued) return;
+    queued = requestAnimationFrame(function () { queued = 0; report('scroll'); });
+  }, { passive: true });
+  window.addEventListener('error', function (event) {
+    send({
+      type: 'error',
+      message: String(event.message || 'Script error'),
+      source: String(event.filename || ''),
+      line: event.lineno || 0,
+    });
+  }, true);
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason;
+    send({ type: 'error', message: 'Unhandled rejection: ' + (reason && reason.message ? reason.message : String(reason)) });
+  });
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || data.__iexaPreviewCommand !== 1) return;
+    if (data.type === 'scroll') window.scrollTo(0, Math.max(0, Number(data.y) || 0));
+    else if (data.type === 'report') report('ready');
+  });
+  if (document.readyState === 'complete') report('ready');
+  else window.addEventListener('load', function () { report('ready'); });
+})();
+</script>`;
+const PREVIEW_RUNTIME_MAX_BYTES = 16 * 1024 * 1024;
+
+function injectPreviewRuntime(html: string): string {
+  // Inject as early as the document allows: a page that throws in its own
+  // <head> scripts must still be reported, so appending before </body> is too
+  // late. Stay behind the charset declaration and the <head> tag so encoding
+  // sniffing and parser state are untouched.
+  const head = /<head[^>]*>/i.exec(html);
+  const charset = /<meta[^>]+charset[^>]*>/i.exec(html);
+  let at = head ? head.index + head[0].length : -1;
+  if (charset && charset.index < 4096) at = Math.max(at, charset.index + charset[0].length);
+  if (at < 0) {
+    const body = /<body[^>]*>/i.exec(html);
+    at = body ? body.index + body[0].length : 0;
+  }
+  return `${html.slice(0, at)}${PREVIEW_RUNTIME}${html.slice(at)}`;
+}
+
 function scopedArtifact(file: string): string | null {
   const sessionRoots = loadSessionStore().sessions.map(session => {
     const root = normalizeSessionProject(session).projectRoot;
@@ -3564,6 +3636,32 @@ ${recentMemories}
       return;
     }
 
+    // Cheap change detection for the live preview. The renderer polls this
+    // instead of the preview URL so a 20 MB document is not re-downloaded just
+    // to discover that nothing changed.
+    if (url.pathname.startsWith('/api/fs/preview-stat/') && req.method === 'GET') {
+      const encoded = url.pathname.slice('/api/fs/preview-stat/'.length);
+      const separator = encoded.indexOf('/');
+      const reply = (payload: unknown) => {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        res.end(JSON.stringify(payload));
+      };
+      if (separator < 1) { reply({ exists: false }); return; }
+      try {
+        const scope = encoded.slice(0, separator);
+        const requestedPath = decodeURIComponent(encoded.slice(separator + 1)).replace(/\//g, path.sep);
+        const target = resolveHtmlPreviewPath(scope, requestedPath);
+        if (!target) { reply({ exists: false }); return; }
+        const stat = fs.statSync(target);
+        reply({ exists: true, mtimeMs: stat.mtimeMs, size: stat.size });
+      } catch { reply({ exists: false }); }
+      return;
+    }
+
     if (url.pathname.startsWith('/api/fs/preview/') && req.method === 'GET') {
       try {
         const encoded = url.pathname.slice('/api/fs/preview/'.length);
@@ -3579,12 +3677,41 @@ ${recentMemories}
         }
         const ext = path.extname(target).toLowerCase();
         applyPreviewIsolation(res, ext);
-        res.writeHead(200, {
+        const commonHeaders = {
           'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
           'Content-Disposition': 'inline',
           'Cache-Control': 'no-store',
           'X-Content-Type-Options': 'nosniff',
-        });
+        };
+        // Only the top-level HTML document gets the runtime. Subresources keep
+        // streaming straight from disk.
+        if (url.searchParams.get('iexa_runtime') === '1' && (ext === '.html' || ext === '.htm')) {
+          const stat = fs.statSync(target);
+          if (stat.size <= PREVIEW_RUNTIME_MAX_BYTES) {
+            const source = fs.readFileSync(target, 'utf8');
+            // The runtime is injected as UTF-8 text and the response is served
+            // as UTF-8, so only touch documents that are already UTF-8 (or pure
+            // ASCII, which is identical in every ASCII-compatible encoding).
+            // Anything else is streamed untouched; it simply loses the scroll
+            // and error channel, never its bytes.
+            const declared = /<meta[^>]+charset\s*=\s*["']?([\w-]+)/i.exec(source.slice(0, 4096));
+            const charset = declared ? declared[1].toLowerCase() : '';
+            const utf8Safe = charset === 'utf-8' || charset === 'utf8'
+              || (!charset && !/[\u0080-\uFFFF]/.test(source));
+            if (utf8Safe) {
+              const document = injectPreviewRuntime(source);
+              const body = Buffer.from(document, 'utf8');
+              res.writeHead(200, {
+                ...commonHeaders,
+                'Content-Type': 'text/html; charset=utf-8',
+                'Content-Length': body.length,
+              });
+              res.end(body);
+              return;
+            }
+          }
+        }
+        res.writeHead(200, commonHeaders);
         pipeFile(target, res);
       } catch {
         res.writeHead(400); res.end('预览路径无效');
