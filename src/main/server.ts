@@ -47,6 +47,7 @@ import { UploadRoutes } from './api/UploadRoutes';
 import { MobileTlsListener } from './mobile/MobileTlsListener';
 import { resolveScopedPath } from './security/PathSandbox';
 import { groupFileChanges, undoFileChanges, undoUnavailable } from './session/FileChangeUndo';
+import { encodeRollbacks, hydrateRollbacks } from './session/RollbackStore';
 import { CheckpointStore, FileChange } from './session/CheckpointStore';
 import { loadProtectedSettings, saveProtectedSettings } from './security/SecretStore';
 import { handleWebDAVRoute } from './api/WebDAVRoutes';
@@ -118,6 +119,7 @@ const MEMORY_DIR = path.join(WORKSPACE_DIR, '.iexa-memory');
 const SETTINGS_FILE = path.join(WORKSPACE_DIR, '.iexa-settings.json');
 const SESSIONS_FILE = path.join(WORKSPACE_DIR, '.iexa-sessions.json');
 const SESSIONS_DIR = path.join(WORKSPACE_DIR, '.iexa-sessions');
+const ROLLBACK_DIR = path.join(SESSIONS_DIR, 'rollbacks');
 const SESSION_CONTEXT_DIR = path.join(WORKSPACE_DIR, '.iexa-session-context');
 const WEBDAV_CONFIG_FILE = path.join(WORKSPACE_DIR, '.iexa-webdav.json');
 const PROJECT_FILE = path.join(WORKSPACE_DIR, '.iexa-project.json');
@@ -620,7 +622,8 @@ function loadMessages(sessionId: string): ChatMessage[] {
 }
 
 async function saveMessages(sessionId: string, msgs: ChatMessage[]): Promise<void> {
-  await messageStore.save(sessionId, msgs);
+  // Undo snapshots go to content-addressed files; the session keeps only refs.
+  await messageStore.save(sessionId, encodeRollbacks(msgs, ROLLBACK_DIR));
 }
 
 // Rollback snapshots (up to ~700KB per edit) are server-owned undo material and
@@ -1929,6 +1932,7 @@ function createServer(auth: LocalApiAuth): http.Server {
       runningSessionIds.add(sessionId);
       try {
         const messages = loadMessages(sessionId);
+        hydrateRollbacks(messages, ROLLBACK_DIR);
         const message = messages.find(item => item.role === 'assistant' && item.transcript?.turnId === turnId);
         if (!message) { jsonReply(res, 404, { error: '文件修改记录未找到' }); return; }
         const changes = (message.toolCalls || []).filter(call => call.result?.success && call.result.fileChange).map(call => call.result!.fileChange!);
