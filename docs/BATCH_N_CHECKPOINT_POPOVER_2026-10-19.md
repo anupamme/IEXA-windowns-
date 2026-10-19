@@ -82,7 +82,3 @@ body 后不再命中外层，若不改，**点面板内部任意位置都会把�
 
 全量回归 **634 / 634**，`npm run build` exit 0。
 
-## 截图
-
-`workspace/tmp/checkpoint-fixed.png` — 900×600：面板整体浮在侧栏之上，
-`elementFromPoint` 中心返回面板本身，四边完整在视口内。

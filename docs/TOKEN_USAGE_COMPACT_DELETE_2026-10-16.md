@@ -35,7 +35,6 @@
   - 4 张卡片 432×111px，宽屏 **2 张/行**，4 个删除按钮，清空按钮可见；
   - 实际点击删除 → 确认框 → UI 4→3、API 3、磁盘文件 3；
   - 实际点击清空 → 确认框 → UI 0、文件 0、按钮自动隐藏。
-  - 截图：`workspace/tmp/tokenui_before.png`。
 
 ## 生效方式
 重启应用（`start-electron.bat` 启动时会先 `npm run build`；后端 dist 需重启进程，渲染文件随应用重启加载）。

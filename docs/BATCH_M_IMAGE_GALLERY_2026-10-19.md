@@ -102,7 +102,3 @@ const IMAGE_PREVIEW_HOSTS =
 
 全量回归 **633 / 633**，`npm run build` exit 0。
 
-## 截图
-
-- `workspace/tmp/gallery-fit.png` — 第 2/3 张，适应窗口，胶片条高亮
-- `workspace/tmp/gallery-zoom.png` — 252%，光标锚点放大后平移

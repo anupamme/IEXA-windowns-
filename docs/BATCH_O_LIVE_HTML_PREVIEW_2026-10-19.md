@@ -98,11 +98,6 @@ HTML 预览要像 WorkBuddy 那样，是一个**会自己更新**的渲染窗口
 
 全量回归 **635 / 635**，`npm run build` exit 0。
 
-## 截图
-
-- `workspace/tmp/live-preview-v1.png` — 首次渲染
-- `workspace/tmp/live-preview-v2.png` — 文件改写后自动更新，`已更新 17:31:05`
-- `workspace/tmp/live-preview-error.png` — 脚本错误徽标 + 红色状态点
 
 ## 备注
 

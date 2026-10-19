@@ -60,4 +60,3 @@ else                                           → 不注册
 | 全量 | **575/575**（限并发） |
 | 真实浏览器 | plan 选项存在、菜单可开、切换后 label=`仅规划（只读）`、`data-permission-mode=plan`、百分比元素可见（0%） |
 
-截图：`workspace/tmp/batchb_plan_mode.png`。
