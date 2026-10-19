@@ -15,12 +15,12 @@ function pickFunctions(names) {
 }
 
 function createWindow(t) {
-  const dom = new JSDOM('<body><div id="messages"></div><div id="tokenUsageList"></div><div id="tokenUsageUpdated"></div></body>', { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost' });
+  const dom = new JSDOM('<body><div id="messages"></div><div id="tokenUsageList"></div><div id="tokenUsageUpdated"></div><button id="tokenUsageClearAll" hidden></button></body>', { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost' });
   if (t) t.after(() => dom.window.close());
   const w = dom.window;
   w.escapeHtml = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   w.formatMessageTimestamp = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? '14:31' : '');
-  w.eval(pickFunctions(['renderMessageUsage', 'formatUsageNumber', 'formatEstimatedCost', 'renderTokenUsage']));
+  w.eval(pickFunctions(['renderMessageUsage', 'formatUsageNumber', 'formatEstimatedCost', 'renderTokenUsage', 'uiIcon', 'formatUsagePercent']));
   return w;
 }
 
@@ -104,4 +104,41 @@ test('app.js keeps no duplicate top-level function declarations', () => {
   }
   const duplicates = [...counts.entries()].filter(([, count]) => count > 1);
   assert.deepEqual(duplicates, [], 'duplicate top-level declarations: ' + JSON.stringify(duplicates));
+});
+
+test('token usage cards carry per-record delete controls and the clear-all toggle', (t) => {
+  const w = createWindow(t);
+  const clear = w.document.getElementById('tokenUsageClearAll');
+  w.tokenUsageRecords = [
+    { key: 'openai:fixture-cache:p1', model: 'fixture-cache', provider: 'openai', profileName: 'p', inputTokens: 1000, outputTokens: 100, requests: 5, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, estimatedCostUsd: null, updatedAt: 2 },
+  ];
+  w.renderTokenUsage();
+  const html = w.document.getElementById('tokenUsageList').innerHTML;
+  assert.ok(html.includes('data-ui-action="deleteTokenUsage"'), 'delete action emitted: ' + html.slice(0, 600));
+  assert.ok(html.includes('data-ui-arg="openai:fixture-cache:p1"'), 'delete argument is the record key: ' + html.slice(0, 600));
+  assert.equal(clear.hidden, false, 'clear-all is offered while records exist');
+  w.tokenUsageRecords = [];
+  w.renderTokenUsage();
+  assert.equal(clear.hidden, true, 'clear-all hides when the list is empty');
+});
+
+test('token usage delete wiring stays registered on actions and server routes', () => {
+  assert.ok(appSource.includes('deleteTokenUsage: (value) => deleteTokenUsage(value),'), 'single-record delete registered on the delegated action map');
+  assert.ok(appSource.includes('clearTokenUsage: () => clearTokenUsage(),'), 'clear-all registered on the delegated action map');
+  assert.ok(appSource.includes('class="token-usage-model-delete"'), 'card render keeps the delete control class');
+  const serverSource = fs.readFileSync(path.join(root, 'src/main/server.ts'), 'utf8');
+  assert.ok(serverSource.includes("url.pathname === '/api/token-usage' && req.method === 'DELETE'"), 'clear-all route present');
+  assert.ok(serverSource.includes("url.pathname.startsWith('/api/token-usage/') && req.method === 'DELETE'"), 'single-record delete route present');
+});
+
+test('cache tile shows the cache share of the input side as a percentage', (t) => {
+  const w = createWindow(t);
+  w.tokenUsageRecords = [
+    { key: 'k1', model: 'm1', provider: 'openai', inputTokens: 300, outputTokens: 50, requests: 4, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, estimatedCostUsd: null, updatedAt: 2 },
+    { key: 'k2', model: 'm2', provider: 'openai', inputTokens: 500, outputTokens: 50, requests: 4, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, estimatedCostUsd: null, updatedAt: 1 },
+  ];
+  w.renderTokenUsage();
+  const html = w.document.getElementById('tokenUsageList').innerHTML;
+  assert.ok(html.includes('<span>缓存</span><strong>100</strong><small class="token-usage-model-pct">25%</small>'), '100 cache of 300+100 input must read 25%: ' + html.slice(0, 900));
+  assert.ok(html.includes('<span>缓存</span><strong>0</strong><small class="token-usage-model-pct">0%</small>'), 'no cache must read 0%: ' + html.slice(0, 900));
 });

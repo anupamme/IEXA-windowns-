@@ -730,7 +730,10 @@ version: 1.0.0
         <p class="sync-desc">按模型分别统计 API 返回的实际 Token 用量。每次模型调用完成后自动累加，不是文本长度估算。</p>
         <div class="token-usage-toolbar">
           <span class="token-usage-live"><i></i> 实时统计</span>
-          <span class="token-usage-updated" id="tokenUsageUpdated">等待首次调用</span>
+          <span class="token-usage-toolbar-end">
+            <span class="token-usage-updated" id="tokenUsageUpdated">等待首次调用</span>
+            <button type="button" class="token-usage-clear" id="tokenUsageClearAll" data-ui-action="clearTokenUsage" hidden>清空全部</button>
+          </span>
         </div>
         <div class="token-usage-list" id="tokenUsageList" aria-live="polite">
           <div class="token-usage-empty">尚无模型用量记录，发送消息后会自动统计。</div>

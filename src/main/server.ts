@@ -1234,6 +1234,7 @@ function routeAllowedForDevice(device: MobileBridgeDevice, url: URL, method: str
   if (permissionRoute) return false;
   if (chatRoutes) {
     if ((pathname === '/api/profiles' || pathname === '/api/appearance' || pathname === '/api/soul') && !readOnly) return false;
+    if (pathname === '/api/token-usage' && !readOnly) return false;
     return true;
   }
   if (device.capability !== 'files') return false;
@@ -2057,6 +2058,25 @@ function createServer(auth: LocalApiAuth): http.Server {
         };
       });
       jsonReply(res, 200, { records });
+      return;
+    }
+
+    if (url.pathname === '/api/token-usage' && req.method === 'DELETE') {
+      // 清空全部用量记录；写空数组即完成重置，无需额外状态。
+      new JsonStore<TokenUsageRecord[]>(TOKEN_USAGE_FILE, () => []).saveSync([]);
+      jsonReply(res, 200, { ok: true, cleared: true });
+      return;
+    }
+
+    if (url.pathname.startsWith('/api/token-usage/') && req.method === 'DELETE') {
+      // 删除单个模型的用量记录；key 与存储中的 record.key 一致（provider:model:profileId）。
+      let key = '';
+      try { key = decodeURIComponent(url.pathname.slice('/api/token-usage/'.length)); }
+      catch { jsonReply(res, 400, { error: '无效的记录标识。' }); return; }
+      const records = loadTokenUsage();
+      const remaining = records.filter((item) => item.key !== key);
+      new JsonStore<TokenUsageRecord[]>(TOKEN_USAGE_FILE, () => remaining).saveSync(remaining);
+      jsonReply(res, 200, { ok: true, removed: records.length - remaining.length });
       return;
     }
 

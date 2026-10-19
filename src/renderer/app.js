@@ -41,6 +41,8 @@ const rendererActions = Object.freeze({
   activateProfile: (value) => activateProfile(value),
   editProfile: (value) => editProfile(value),
   deleteProfile: (value) => deleteProfile(value),
+  deleteTokenUsage: (value) => deleteTokenUsage(value),
+  clearTokenUsage: () => clearTokenUsage(),
   stop: () => {},
 });
 document.addEventListener('click', (event) => {
@@ -3755,11 +3757,23 @@ function formatEstimatedCost(value) {
   return `$${cost.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}`;
 }
 
+// 缓存占输入侧（输入 + 缓存）token 的比例：≥10% 取整，<10% 保留一位小数。
+function formatUsagePercent(part, whole) {
+  const value = Math.max(0, Number(part) || 0);
+  const base = Math.max(0, Number(whole) || 0);
+  if (base <= 0 || value <= 0) return '0%';
+  const pct = (value / base) * 100;
+  if (pct >= 10) return `${Math.round(pct)}%`;
+  return `${pct.toFixed(1).replace(/\.0$/, '')}%`;
+}
+
 function renderTokenUsage() {
   const list = document.getElementById('tokenUsageList');
   const updated = document.getElementById('tokenUsageUpdated');
+  const clearAll = document.getElementById('tokenUsageClearAll');
   if (!list) return;
   const records = [...tokenUsageRecords].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  if (clearAll) clearAll.hidden = records.length === 0;
   if (!records.length) {
     list.innerHTML = '<div class="token-usage-empty">尚无模型用量记录，发送消息后会自动统计。</div>';
     if (updated) updated.textContent = '等待首次调用';
@@ -3770,13 +3784,17 @@ function renderTokenUsage() {
     const output = Number(r.outputTokens) || 0;
     const total = input + output;
     const cache = (Number(r.cacheCreationInputTokens) || 0) + (Number(r.cacheReadInputTokens) || 0);
+    const key = escapeHtml(r.key || '');
     return `<div class="token-usage-model-card">
-      <div class="token-usage-model-head"><div><strong>${escapeHtml(r.model || '未知模型')}</strong><span>${escapeHtml(r.provider || '')}${r.profileName ? ` · ${escapeHtml(r.profileName)}` : ''}</span></div><b>${formatUsageNumber(total)}</b></div>
+      <div class="token-usage-model-head">
+        <div class="token-usage-model-id"><strong>${escapeHtml(r.model || '未知模型')}</strong><span>${escapeHtml(r.provider || '')}${r.profileName ? ` · ${escapeHtml(r.profileName)}` : ''}</span></div>
+        <div class="token-usage-model-side"><b>${formatUsageNumber(total)}</b><button type="button" class="token-usage-model-delete" data-ui-action="deleteTokenUsage" data-ui-arg="${key}" title="删除该记录" aria-label="删除该记录">${uiIcon('trash')}</button></div>
+      </div>
       <div class="token-usage-model-stats">
         <div><span>输入</span><strong>${formatUsageNumber(input)}</strong></div>
         <div><span>输出</span><strong>${formatUsageNumber(output)}</strong></div>
         <div><span>调用次数</span><strong>${Number(r.requests || 0).toLocaleString()}</strong></div>
-        <div><span>缓存</span><strong>${formatUsageNumber(cache)}</strong></div>
+        <div class="token-usage-model-stat-cache"><span>缓存</span><strong>${formatUsageNumber(cache)}</strong><small class="token-usage-model-pct">${formatUsagePercent(cache, input + cache)}</small></div>
       </div>
       <div class="token-usage-model-time">费用估算：${formatEstimatedCost(r.estimatedCostUsd)} · 最近更新：${r.updatedAt ? new Date(r.updatedAt).toLocaleString() : '—'}</div>
     </div>`;
@@ -3791,6 +3809,21 @@ async function loadTokenUsage() {
     tokenUsageRecords = Array.isArray(data.records) ? data.records : [];
     renderTokenUsage();
   } catch (err) { console.error('Failed to load token usage:', err); }
+}
+
+async function deleteTokenUsage(key) {
+  if (!key) return;
+  if (!(await window.IexaDialogs.confirm('删除这个模型的 Token 用量记录？'))) return;
+  const response = await fetch(`${API_BASE}/api/token-usage/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (!response.ok) { console.error('Failed to delete token usage:', response.status); return; }
+  await loadTokenUsage();
+}
+
+async function clearTokenUsage() {
+  if (!(await window.IexaDialogs.confirm('清空全部 Token 用量记录？此操作不可撤销。'))) return;
+  const response = await fetch(`${API_BASE}/api/token-usage`, { method: 'DELETE' });
+  if (!response.ok) { console.error('Failed to clear token usage:', response.status); return; }
+  await loadTokenUsage();
 }
 
 function handleUsage(usage) {

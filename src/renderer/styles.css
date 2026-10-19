@@ -4494,19 +4494,29 @@ html:not([data-collapse-tools="on"]) .tool-steps::before,
 .token-usage-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; color: var(--text-muted); font-size: calc(.75rem * var(--ui-font-scale, 1)); }
 .token-usage-live { display: inline-flex; align-items: center; gap: 6px; color: var(--success); }
 .token-usage-live i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 15%, transparent); }
-.token-usage-list { display: flex; flex-direction: column; gap: 10px; }
-.token-usage-empty { padding: 42px 20px; text-align: center; color: var(--text-muted); background: var(--bg-secondary); border: 1px dashed var(--border); border-radius: var(--radius); }
-.token-usage-model-card { padding: 15px 16px 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 1px 2px rgba(0,0,0,.03); }
-.token-usage-model-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.token-usage-model-head div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-.token-usage-model-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(.92rem * var(--ui-font-scale, 1)); color: var(--text-primary); }
-.token-usage-model-head span { color: var(--text-muted); font-size: calc(.72rem * var(--ui-font-scale, 1)); }
-.token-usage-model-head b { flex-shrink: 0; color: var(--accent); font-size: calc(1.05rem * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
-.token-usage-model-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 13px; }
-.token-usage-model-stats > div { min-width: 0; padding: 9px 10px; background: var(--bg-primary); border-radius: var(--radius-sm); }
-.token-usage-model-stats span { display: block; color: var(--text-muted); font-size: calc(.68rem * var(--ui-font-scale, 1)); }
-.token-usage-model-stats strong { display: block; margin-top: 3px; color: var(--text-primary); font-size: calc(.9rem * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
-.token-usage-model-time { margin-top: 10px; color: var(--text-muted); font-size: calc(.68rem * var(--ui-font-scale, 1)); }
+.token-usage-toolbar-end { display: inline-flex; align-items: center; gap: 10px; }
+.token-usage-clear { padding: 2px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; color: var(--text-muted); font-size: calc(.7rem * var(--ui-font-scale, 1)); cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.token-usage-clear:hover { color: var(--error); border-color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.token-usage-clear[hidden] { display: none; }
+.token-usage-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 8px; align-items: start; }
+.token-usage-empty { grid-column: 1 / -1; padding: 30px 20px; text-align: center; color: var(--text-muted); background: var(--bg-secondary); border: 1px dashed var(--border); border-radius: var(--radius); }
+.token-usage-model-card { padding: 10px 12px 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+.token-usage-model-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.token-usage-model-id { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.token-usage-model-id strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(.84rem * var(--ui-font-scale, 1)); color: var(--text-primary); }
+.token-usage-model-id span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: calc(.66rem * var(--ui-font-scale, 1)); }
+.token-usage-model-side { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.token-usage-model-side b { color: var(--accent); font-size: calc(.94rem * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
+.token-usage-model-delete { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; transition: color .15s, background .15s; }
+.token-usage-model-delete:hover { color: var(--error); background: color-mix(in srgb, var(--error) 14%, transparent); }
+.token-usage-model-delete .ui-icon { width: 13px; height: 13px; }
+.token-usage-model-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.token-usage-model-stats > div { min-width: 0; padding: 6px 8px; background: var(--bg-primary); border-radius: var(--radius-sm); }
+.token-usage-model-stats span { display: block; color: var(--text-muted); font-size: calc(.6rem * var(--ui-font-scale, 1)); }
+.token-usage-model-stats strong { display: block; margin-top: 2px; color: var(--text-primary); font-size: calc(.78rem * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
+.token-usage-model-stats .token-usage-model-stat-cache strong { display: inline; }
+.token-usage-model-stats .token-usage-model-pct { margin-left: 4px; color: var(--text-muted); font-size: calc(.6rem * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
+.token-usage-model-time { margin-top: 6px; color: var(--text-muted); font-size: calc(.62rem * var(--ui-font-scale, 1)); }
 .token-calculator-footnote { margin-top: 12px; color: var(--text-muted); font-size: calc(.75rem * var(--ui-font-scale, 1)); line-height: 1.5; }
 @media (max-width: 620px) { .token-usage-model-stats { grid-template-columns: repeat(2, 1fr); } }
 
@@ -5475,6 +5485,9 @@ body {
   margin: 40px auto 72px;
   flex: 0 0 auto;
 }
+
+/* Token usage dashboard: widen the column so two compact cards fit per row. */
+#view-token-calculator > .settings-container { width: min(100%, 920px); }
 
 /* The skills editor remains a fixed modal, independent from page scrolling. */
 #view-skills > .profile-editor-overlay {

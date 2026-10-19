@@ -89,4 +89,6 @@ test('real browser: usage line and token page expose the cache receipt', { skip:
   assert.equal((tokenHtml.match(/<span>缓存<\/span>/g) || []).length, 2, tokenHtml.slice(0, 400));
   assert.ok(tokenHtml.includes('<span>缓存</span><strong>296K</strong>'), tokenHtml.slice(0, 400));
   assert.ok(tokenHtml.includes('<span>缓存</span><strong>0</strong>'), tokenHtml.slice(0, 400));
+  assert.ok(tokenHtml.includes('<small class="token-usage-model-pct">100%</small>'), tokenHtml.slice(0, 500));
+  assert.ok(tokenHtml.includes('<small class="token-usage-model-pct">0%</small>'), tokenHtml.slice(0, 500));
 });

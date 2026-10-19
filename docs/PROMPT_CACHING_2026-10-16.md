@@ -75,3 +75,11 @@ node workspace/tmp/cache-audit.cjs <sessionId>  # 指定会话
 - AST 扫描：app.js 349 个顶层函数声明、0 重复；全渲染层 25 个文件（除 vendor）0 重复。
 - jsdom 7/7；真实浏览器端到端 1/1（实测：唯一 `handleUsage` 存在、`renderPendingMessageUsage` 不存在、实时调用渲染 `111 入 · 22 出 · 33 缓存`）。
 - 全量回归 548 项：547 过；唯一失败为固有负载型 flaky `browser-session-concurrency`，单独复跑通过。
+
+## 八、缓存百分比显示（2026-10-16 追加）
+
+用户要求：Token 用量页的「缓存」数值旁加百分比。
+
+- 口径：**缓存 ÷（输入 + 缓存）**——输入侧 token 中缓存（read + creation 合计）的占比。
+- 渲染：`renderTokenUsage` 缓存格追加 `<small class="token-usage-model-pct">21%</small>`；格式化函数 `formatUsagePercent(part, whole)`：≥10% 取整、<10% 一位小数、无缓存显示 `0%`。
+- 测试：`message-usage-cache.test.js` 新增百分比用例（25% / 0%）；`browser-message-usage.test.js` 补真实浏览器断言（100% / 0%）。
