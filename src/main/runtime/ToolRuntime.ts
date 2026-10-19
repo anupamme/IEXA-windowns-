@@ -161,9 +161,9 @@ export class ToolRuntime {
   }
   beginTurn(): void { this.budget.beginTurn(); }
   recordInputTokens(tokens: number): void { this.budget.recordInputTokens(tokens); }
-  registerDynamicTool(definition: AgentToolDefinition, execute: ToolDefinition['execute']): void {
+  registerDynamicTool(definition: AgentToolDefinition, execute: ToolDefinition['execute'], options: Partial<ToolDefinition> = {}): void {
     if (this.registry.has(definition.name)) return;
-    this.registry.register({ ...definition, risk: 'medium', parallelSafe: false, cancellable: true, requiresApproval: true, execute });
+    this.registry.register({ ...definition, risk: 'medium', parallelSafe: false, cancellable: true, requiresApproval: true, ...options, execute });
   }
 
   registerDefaults(onSkillRead?: (p: string) => void, onSkillWrite?: (p: string) => void): void {

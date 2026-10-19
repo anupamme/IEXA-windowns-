@@ -29,6 +29,7 @@ import {
 } from './session-title';
 import { SkillStore, ensureBundledSkills } from './skills/SkillStore';
 import { maxThinkingLevel, clampThinkingLevel, modelSupportsVision, shouldUseVisionProxy, VisionCapability } from './providers/ModelCapabilities';
+import { readImageNative, readImageToolDefinition } from './tools/ImageTools';
 import { PermissionBroker, PermissionRequest, PendingPermission, PermissionDecision, PermissionMode } from './security/PermissionManager';
 import { QuestionBroker, AskUserRequest, QuestionAnswer, PendingQuestion } from './runtime/QuestionBroker';
 import { SessionManager } from './session/SessionManager';
@@ -364,7 +365,7 @@ function saveContextCompactionLimit(value: unknown): ContextCompactionLimit | un
 
 function normalizePermissionMode(value: unknown): PermissionMode {
   const mode = String(value || '').toLowerCase();
-  return mode === 'ask' || mode === 'full' ? mode : 'risk';
+  return mode === 'plan' || mode === 'ask' || mode === 'full' ? mode : 'risk';
 }
 
 function normalizeThinkingLevel(v: unknown): 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' {
@@ -2196,7 +2197,15 @@ ${recentMemories}
               const output = await visionFallback.describe({ ...visionProfile, type: visionProfile.provider as ProviderType, displayName: visionProfile.name }, fs.readFileSync(source), mimeType, String(args.prompt || ''));
               return { output, success: true };
             } catch (error) { return { output: `图片识别失败：${(error as Error).message}`, success: false }; }
-          });
+          }, { risk: 'low', parallelSafe: true, cancellable: true, requiresApproval: false });
+        } else if (modelSupportsVision(profile.provider, profile.model, profile.visionCapability)) {
+          // Native vision: attach the original pixels instead of a text description.
+          agent.registerDynamicTool(readImageToolDefinition, async (args) => {
+            const roots = [getProjectRoot() || WORKSPACE_DIR, WORKSPACE_DIR]
+              .filter((value): value is string => Boolean(value))
+              .map((value) => path.resolve(value));
+            return readImageNative(args, roots);
+          }, { risk: 'low', parallelSafe: true, cancellable: false, requiresApproval: false });
         }
         const mcpBindings = activeMcpAgentBindings();
         for (const binding of mcpBindings) {

@@ -3734,12 +3734,16 @@ function handleContextStatus(context) {
   const state = context.state || 'ok';
   contextProgress.dataset.state = state;
   contextProgressValue.style.strokeDasharray = percent + ' 100';
+  const percentLabel = document.getElementById('contextProgressPercent');
+  if (percentLabel) percentLabel.textContent = percent + '%';
   const source = context.estimated ? '估算' : '模型实测';
+  const thresholdTokens = Math.max(1, Number(context.compactThreshold) || Math.round(windowTokens * 0.8));
+  const thresholdPercent = Math.min(100, Math.round((thresholdTokens / windowTokens) * 100));
   let statusText = state === 'compacting' ? '正在自动压缩上下文' :
     state === 'compacted' ? '已自动压缩上下文' :
     state === 'near-limit' ? '接近自动压缩阈值' :
     state === 'exhausted' ? '上下文接近上限' : '上下文用量';
-  const detail = `${statusText}：${formatContextTokens(usedTokens)} / ${formatContextTokens(windowTokens)} tokens（${percent}% · ${source}）`;
+  const detail = `${statusText}：${formatContextTokens(usedTokens)} / ${formatContextTokens(windowTokens)} tokens（${percent}% · ${source}）· 自动压缩阈值 ${thresholdPercent}%`;
   contextProgress.title = detail;
   contextProgressTooltip.textContent = detail;
 }
@@ -8001,6 +8005,7 @@ function initJobsUI() {
 }
 
 const PERMISSION_MODE_LABELS = {
+  plan: '仅规划（只读）',
   ask: '请求批准',
   risk: '帮我批准',
   full: '完全访问权限',

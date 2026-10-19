@@ -5,7 +5,7 @@ import { ToolDefinition, ToolRisk } from '../runtime/ToolRegistry';
 
 export interface PermissionRequest { sessionId: string; tool: ToolDefinition; args: Record<string, unknown>; signal?: AbortSignal; toolCallId?: string; runId?: string; onAwaitingApproval?: () => void; }
 export type PermissionDecision = 'allow_once' | 'allow_session' | 'allow' | 'deny';
-export type PermissionMode = 'ask' | 'risk' | 'full';
+export type PermissionMode = 'plan' | 'ask' | 'risk' | 'full';
 export type PermissionResolver = (request: PermissionRequest) => Promise<PermissionDecision>;
 
 export interface PendingPermission {
@@ -16,6 +16,21 @@ export interface PendingPermission {
 }
 
 type PendingListener = (pending: PendingPermission) => void;
+
+/**
+ * Tools that never mutate the workspace or the user's machine. Plan mode allows
+ * exactly this set (plus read-only desktop_control actions) and refuses the rest
+ * before any approval prompt, so exploration is safe by construction.
+ */
+const PLAN_READ_ONLY_TOOLS = new Set([
+  'project_instructions', 'todo_write', 'ask_user', 'file_read', 'grep', 'glob',
+  'memory_get', 'web_search', 'browser_fetch', 'display_file', 'read_image',
+]);
+
+const READ_ONLY_DESKTOP_ACTIONS = new Set([
+  'list_windows', 'observe', 'frame', 'session_state', 'find_element',
+  'read_focused', 'wait', 'wait_change',
+]);
 
 /** Bridges a runtime permission wait to HTTP/SSE without exposing Tool internals. */
 export class PermissionBroker {
@@ -91,6 +106,18 @@ export class PermissionManager {
   async authorize(request: PermissionRequest): Promise<void> {
     const checkAbort = () => { if (request.signal?.aborted) throw new IexaError('TOOL_CANCELLED', 'RUNTIME', 'Tool cancelled during permission approval.'); };
     checkAbort();
+    if (this.mode === 'plan') {
+      const name = request.tool.name;
+      const readOnlyDesktop = name === 'desktop_control'
+        && READ_ONLY_DESKTOP_ACTIONS.has(String(request.args.action || 'observe'));
+      if (!PLAN_READ_ONLY_TOOLS.has(name) && !readOnlyDesktop) {
+        this.audit(request, 'deny');
+        throw new IexaError('PERMISSION_DENIED', 'SECURITY',
+          `当前为规划模式（只读）：${name} 不会执行。需要动手时请切换到「帮我批准」或「完全访问」。`);
+      }
+      this.audit(request, 'allow');
+      return;
+    }
     const requiresApproval = this.mode === 'ask'
       ? !['todo_write', 'file_read', 'memory_get', 'project_instructions'].includes(request.tool.name)
       : this.mode === 'full'

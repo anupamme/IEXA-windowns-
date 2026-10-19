@@ -10,7 +10,7 @@ export interface PathPolicy {
   writable?: boolean;
   mode?: PathMode;
   roots?: readonly string[];
-  permissionMode?: 'ask' | 'risk' | 'full';
+  permissionMode?: 'plan' | 'ask' | 'risk' | 'full';
 }
 
 function reject(code: string, message: string): never { throw new IexaError(code, 'SECURITY', message); }

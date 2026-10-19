@@ -355,6 +355,11 @@ html[data-motion="reduced"] .workbench-shell .waiting-indicator__label {
 [data-theme="dark"] .workbench-shell { --permission-full-color: #e2bd00; }
 .workbench-shell .permission-mode-btn[data-permission-mode="full"],
 .workbench-shell .permission-mode-btn[data-permission-mode="full"]:is(:hover, .is-open) { color: var(--permission-full-color); }
+/* Plan mode is read-only exploration: visually distinct from approval modes. */
+.workbench-shell { --permission-plan-color: #1f6feb; }
+[data-theme="dark"] .workbench-shell { --permission-plan-color: #6ea8fe; }
+.workbench-shell .permission-mode-btn[data-permission-mode="plan"],
+.workbench-shell .permission-mode-btn[data-permission-mode="plan"]:is(:hover, .is-open) { color: var(--permission-plan-color); }
 .workbench-shell .permission-shield-alert { display: none; }
 .workbench-shell [data-permission-mode="full"] .permission-shield-check { display: none; }
 .workbench-shell [data-permission-mode="full"] .permission-shield-alert { display: inline; }
