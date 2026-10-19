@@ -42,6 +42,7 @@ import { SoulStore, checkSoulBodyLimit, normalizeSoulMetadata } from './agent/So
 import { configureApiResponse, jsonReply, readBody, readRawBody, HttpError, handleHttpError } from './api/HttpServer';
 import { LocalApiAuth, isTLS } from './security/LocalApiAuth';
 import { searchProjectText } from './search/ProjectSearch';
+import { SessionSearchIndex } from './search/SessionSearchIndex';
 import { UploadRoutes } from './api/UploadRoutes';
 import { MobileTlsListener } from './mobile/MobileTlsListener';
 import { resolveScopedPath } from './security/PathSandbox';
@@ -138,6 +139,7 @@ const visionFallback = new VisionFallback();
 const soulStore = new SoulStore(MEMORY_DIR);
 const projectScopeStore = new ProjectScopeStore(path.join(WORKSPACE_DIR, '.iexa-project-scopes'));
 const promptPreviewStore = new PromptPreviewStore(() => loadSettings().profiles.map(profile => profile.apiKey));
+const sessionSearchIndex = new SessionSearchIndex(path.join(WORKSPACE_DIR, '.iexa-search-index'));
 const sessionEventClients = new Map<http.ServerResponse, string>();
 
 interface AppearanceSettings {
@@ -1709,43 +1711,70 @@ function createServer(auth: LocalApiAuth): http.Server {
     // Search API — fuzzy search across session titles + messages
     // =====================================================================
     if (url.pathname === '/api/search' && req.method === 'GET') {
-      const q = (url.searchParams.get('q') || '').trim().toLowerCase();
-      if (!q) { jsonReply(res, 200, { results: [] }); return; }
+      const q = (url.searchParams.get('q') || '').trim();
+      if (!q) { jsonReply(res, 200, { results: [], query: '' }); return; }
 
+      const startedAt = Date.now();
       const store = loadSessionStore();
-      const results: { session: Session; matches: { role: string; snippet: string }[] }[] = [];
+      const byId = new Map(store.sessions.map(session => [session.id, session]));
+      type SearchResult = { session: Session; matches: { role: string; snippet: string; index?: number; timestamp?: number }[] };
+      let results: SearchResult[] | null = null;
 
-      for (const sess of store.sessions) {
-        const msgs = loadMessages(sess.id);
-        const matches: { role: string; snippet: string }[] = [];
+      // Indexed path: only re-reads transcripts whose size/mtime changed, and
+      // indexes prose only, so a 38 MB tool-heavy session costs a few KB.
+      try {
+        sessionSearchIndex.sync(store.sessions.map(session => ({
+          id: session.id,
+          title: session.title || '',
+          updated: session.updated,
+          filePath: path.join(SESSIONS_DIR, `${session.id}.json`),
+        })));
+        results = sessionSearchIndex.search(q, { limit: 40 }).flatMap(hit => {
+          const session = byId.get(hit.sessionId);
+          if (!session) return [];
+          return [{
+            session,
+            matches: hit.matches.map(match => ({
+              role: match.role,
+              snippet: match.index < 0 ? `📝 ${match.snippet}` : match.snippet,
+              index: match.index,
+              timestamp: match.timestamp,
+            })),
+          }];
+        });
+      } catch {
+        results = null;
+      }
 
-        // Search message content
-        for (const msg of msgs) {
-          const content = msg.content.toLowerCase();
-          if (content.includes(q)) {
-            const idx = content.indexOf(q);
+      if (!results) {
+        // Fallback for a damaged index or an unexpected runtime difference:
+        // the original linear scan, kept behaviour-compatible.
+        const needle = q.toLowerCase();
+        results = [];
+        for (const sess of store.sessions) {
+          const msgs = loadMessages(sess.id);
+          const matches: { role: string; snippet: string; index?: number; timestamp?: number }[] = [];
+          for (let i = 0; i < msgs.length; i++) {
+            const msg = msgs[i];
+            const content = (msg.content || '').toLowerCase();
+            const idx = content.indexOf(needle);
+            if (idx < 0) continue;
             const start = Math.max(0, idx - 40);
-            const end = Math.min(content.length, idx + q.length + 40);
+            const end = Math.min(content.length, idx + needle.length + 40);
             let snippet = msg.content.substring(start, end);
             if (start > 0) snippet = '...' + snippet;
             if (end < msg.content.length) snippet += '...';
-            matches.push({ role: msg.role, snippet });
+            matches.push({ role: msg.role, snippet, index: i, timestamp: msg.timestamp });
             if (matches.length >= 5) break;
           }
-        }
-
-        // Also match session title
-        const titleLower = sess.title.toLowerCase();
-        if (titleLower.includes(q) && matches.length === 0) {
-          matches.push({ role: 'title', snippet: '📝 ' + sess.title });
-        }
-
-        if (matches.length > 0) {
-          results.push({ session: sess, matches });
+          if (!matches.length && sess.title.toLowerCase().includes(needle)) {
+            matches.push({ role: 'title', snippet: '📝 ' + sess.title, index: -1 });
+          }
+          if (matches.length > 0) results.push({ session: sess, matches });
         }
       }
 
-      jsonReply(res, 200, { results, query: q });
+      jsonReply(res, 200, { results, query: q, tookMs: Date.now() - startedAt });
       return;
     }
 

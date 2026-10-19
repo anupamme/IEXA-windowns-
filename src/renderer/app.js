@@ -32,6 +32,7 @@ const rendererActions = Object.freeze({
   testWebDAV: () => testWebDAV(),
   syncNow: () => syncNow(),
   switchSession: (value) => switchSession(value),
+  openSearchHit: (value) => openSearchHit(value),
   startRename: (value) => startRename(value),
   deleteSession: (value) => deleteSession(value),
   archiveSession: (value) => setSessionArchived(value, true),
@@ -1502,7 +1503,8 @@ async function performSearch() {
         <div class="search-result-item" data-ui-action="switchSession" data-ui-arg="${escapeHtml(r.session.id)}">
           <div class="search-result-title">${escapeHtml(r.session.title)}</div>
           ${r.matches.map(m => `
-            <div class="search-result-snippet"><span class="search-role">${m.role === 'user' ? uiIcon('user') : m.role === 'title' ? uiIcon('edit') : uiIcon('bot')}</span> ${highlightMatch(m.snippet, q)}</div>
+            <div class="search-result-snippet${Number.isInteger(m.index) && m.index >= 0 ? ' is-hittable' : ''}"
+              ${Number.isInteger(m.index) && m.index >= 0 ? `role="button" tabindex="0" title="跳转到这条消息" data-ui-action="openSearchHit" data-ui-arg="${escapeHtml(r.session.id)}:${m.index}"` : ''}><span class="search-role">${m.role === 'user' ? uiIcon('user') : m.role === 'title' ? uiIcon('edit') : uiIcon('bot')}</span> ${highlightMatch(m.snippet, q)}</div>
           `).join('')}
         </div>
       `).join('');
@@ -1521,6 +1523,45 @@ function highlightMatch(text, query) {
   const regex = new RegExp(`(${escaped})`, 'gi');
   return escapeHtml(text).replace(regex, '<em>$1</em>');
 }
+
+/**
+ * Open the session a search snippet came from and scroll to that message.
+ *
+ * The persisted transcript is authoritative, while the DOM exposes
+ * `data-message-index` for every rendered message. Switching sessions can take
+ * a frame or two (history fetch + mount), so poll briefly instead of guessing a
+ * fixed delay, then flash the target so the eye lands on the right turn.
+ */
+async function openSearchHit(value) {
+  const raw = String(value || '');
+  const separator = raw.lastIndexOf(':');
+  if (separator <= 0) return;
+  const sessionId = raw.slice(0, separator);
+  const messageIndex = Number(raw.slice(separator + 1));
+  if (!sessionId) return;
+  await switchSession(sessionId);
+  if (!Number.isInteger(messageIndex) || messageIndex < 0) return;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const target = chatMessages.querySelector(`.message[data-message-index="${messageIndex}"]`);
+    if (target) {
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      target.classList.remove('search-hit-flash');
+      void target.offsetWidth; // restart the animation when the same hit is clicked twice
+      target.classList.add('search-hit-flash');
+      window.setTimeout(() => target.classList.remove('search-hit-flash'), 2400);
+      return;
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 100));
+  }
+}
+
+searchResults.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const snippet = event.target.closest?.('.search-result-snippet[data-ui-action]');
+  if (!snippet) return;
+  event.preventDefault();
+  openSearchHit(snippet.dataset.uiArg).catch(console.error);
+});
 
 // =============================================================================
 // Chat Input

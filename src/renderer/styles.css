@@ -589,6 +589,34 @@ body {
   font-style: normal;
 }
 
+/* Snippets with a message offset jump straight to that turn. */
+.search-result-snippet.is-hittable {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 4px;
+  margin-left: -4px;
+}
+
+.search-result-snippet.is-hittable:hover,
+.search-result-snippet.is-hittable:focus-visible {
+  background: var(--accent-light);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.search-hit-flash {
+  animation: search-hit-flash 2.2s ease-out;
+}
+
+@keyframes search-hit-flash {
+  0%, 22% { box-shadow: 0 0 0 2px var(--accent); background: var(--accent-light); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-hit-flash { animation: none; box-shadow: 0 0 0 2px var(--accent); }
+}
+
 .search-no-results {
   font-size: calc(0.75rem * var(--ui-font-scale, 1));
   color: var(--text-muted);
