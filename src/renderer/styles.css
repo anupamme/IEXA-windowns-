@@ -6438,15 +6438,20 @@ a:active > .ui-icon,
   transform: translate(0, 0) scale(1);
 }
 
-/* Session checkpoints: toolbar entry + upward popover. */
+/* Session checkpoints: toolbar entry + upward popover.
+   The popover is portalled to <body> and positioned with fixed coordinates.
+   Anchored inside the composer it lived in the composer's stacking context,
+   which sits below the sidebar: in narrow windows the 360px panel extended
+   over the sidebar, was painted underneath it, and clicks landed on sidebar
+   buttons. Fixed positioning also lets it be clamped to the viewport. */
 .checkpoint-wrap { position: relative; display: inline-flex; align-items: center; }
 .checkpoint-popover {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 10px);
-  z-index: 88;
-  width: min(360px, calc(100vw - 32px));
-  max-height: 340px;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1200;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(340px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;
   overflow: hidden;

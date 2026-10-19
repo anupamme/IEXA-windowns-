@@ -3857,14 +3857,52 @@ async function renderCheckpoints() {
   }
 }
 
+const CHECKPOINT_POPOVER_GAP = 10;
+const CHECKPOINT_POPOVER_MARGIN = 8;
+
+// The panel is fixed-positioned and clamped, so it can never be pushed off
+// screen nor end up under the sidebar in a narrow window.
+function positionCheckpointPopover() {
+  const popover = document.getElementById('checkpointPopover');
+  const button = document.getElementById('checkpointBtn');
+  if (!popover || !button || popover.hidden) return;
+  const anchor = button.getBoundingClientRect();
+  const width = Math.min(360, window.innerWidth - CHECKPOINT_POPOVER_MARGIN * 2);
+  popover.style.width = `${Math.round(width)}px`;
+  const height = popover.offsetHeight;
+  const left = Math.min(
+    Math.max(CHECKPOINT_POPOVER_MARGIN, anchor.right - width),
+    Math.max(CHECKPOINT_POPOVER_MARGIN, window.innerWidth - width - CHECKPOINT_POPOVER_MARGIN),
+  );
+  let top = anchor.top - height - CHECKPOINT_POPOVER_GAP;
+  if (top < CHECKPOINT_POPOVER_MARGIN) {
+    // Not enough room above the toolbar: open downwards instead, still clamped.
+    top = Math.min(anchor.bottom + CHECKPOINT_POPOVER_GAP, window.innerHeight - height - CHECKPOINT_POPOVER_MARGIN);
+  }
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(Math.max(CHECKPOINT_POPOVER_MARGIN, top))}px`;
+}
+
 function setCheckpointOpen(open) {
   checkpointOpen = open;
   const popover = document.getElementById('checkpointPopover');
   const button = document.getElementById('checkpointBtn');
-  if (popover) popover.hidden = !open;
+  if (popover) {
+    if (open && popover.parentElement !== document.body) {
+      // Escape the composer's stacking context; see the CSS comment.
+      document.body.appendChild(popover);
+    }
+    popover.hidden = !open;
+    if (open) positionCheckpointPopover();
+  }
   if (button) button.setAttribute('aria-expanded', String(open));
-  if (open) renderCheckpoints();
+  // The list is fetched, so its final height is only known after it renders.
+  if (open) renderCheckpoints().then(positionCheckpointPopover, () => {});
 }
+
+window.addEventListener('resize', () => {
+  if (checkpointOpen) positionCheckpointPopover();
+});
 
 async function rewindCheckpoint(checkpointId) {
   if (!currentSessionId || !checkpointId) return;
@@ -5802,11 +5840,16 @@ function installPopoverHitGuard() {
   const guard = (event) => {
     const popover = openPopoverAt(event.clientX, event.clientY);
     if (!popover || popover.contains(event.target)) return;
+    // Swallow the event for the sliver. preventDefault also stops the derived
+    // compatibility click, and stopImmediatePropagation keeps any other
+    // document-level capture listener (menu closers, palette handlers) from
+    // seeing a press that visually belongs to the panel.
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
   };
-  document.addEventListener('pointerdown', guard, true);
-  document.addEventListener('click', guard, true);
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) {
+    document.addEventListener(type, guard, true);
+  }
 }
 
 installPopoverHitGuard();
@@ -8942,7 +8985,8 @@ document.getElementById('checkpointBtn')?.addEventListener('click', (event) => {
 });
 document.getElementById('checkpointRefresh')?.addEventListener('click', () => renderCheckpoints());
 document.addEventListener('click', (event) => {
-  if (checkpointOpen && !event.target.closest?.('.checkpoint-wrap')) setCheckpointOpen(false);
+  // The panel is portalled to <body>, so it is no longer inside .checkpoint-wrap.
+  if (checkpointOpen && !event.target.closest?.('.checkpoint-wrap, #checkpointPopover')) setCheckpointOpen(false);
 });
 
 // ---- Command palette (Ctrl/Cmd+K) ----
