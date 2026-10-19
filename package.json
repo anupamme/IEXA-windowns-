@@ -14,12 +14,16 @@
     "electron:runtime": "node download_electron.js --install",
     "electron:rebuild": "node scripts/rebuild-native.cjs",
     "dist": "node build-dist.js",
+    "dist:builder": "npm run build && electron-builder --win nsis --publish never",
+    "release:builder": "npm run build && electron-builder --win nsis --publish always",
     "postinstall": "node scripts/vendor-renderer.cjs",
     "pretest": "npm run build"
   },
   "build": {
     "appId": "app.IEXA.desktop",
     "productName": "IEXA-WIN",
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
     },
@@ -32,8 +36,22 @@
       "preload.js",
       "resources/**/*"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "bidalu9-crypto",
+        "repo": "IEXA-windowns-"
+      }
+    ],
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "IEXA-WIN-Setup-${version}.${ext}"
     },
     "asarUnpack": [
       "desktop-agent/publish/**/*",
@@ -41,24 +59,29 @@
     ]
   },
   "dependencies": {
+    "dompurify": "3.4.17",
+    "electron-updater": "6.8.9",
+    "highlight.js": "11.12.0",
     "iconv-lite": "0.7.3",
     "marked": "18.0.13",
     "node-pty": "1.1.0",
     "qrcode": "1.5.4",
-    "webdav": "5.10.0",
-    "dompurify": "3.4.15",
-    "highlight.js": "11.12.0",
-    "selfsigned": "5.5.0"
+    "selfsigned": "5.5.0",
+    "webdav": "5.10.0"
   },
   "devDependencies": {
-    "@types/node": "20.19.43",
-    "@types/qrcode": "1.5.5",
-    "sharp": "0.35.4",
-    "typescript": "5.9.3",
-    "electron": "44.3.0",
     "@electron/rebuild": "4.2.0",
     "@highlightjs/cdn-assets": "11.12.0",
-    "jsdom": "29.0.1"
+    "@types/node": "20.19.43",
+    "@types/qrcode": "1.5.5",
+    "electron": "44.3.0",
+    "electron-builder": "^26.15.3",
+    "jsdom": "29.0.1",
+    "sharp": "0.35.4",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "brace-expansion@^2.0.0": "2.1.7"
   },
   "engines": {
     "node": ">=22.13.0",

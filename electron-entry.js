@@ -4,6 +4,8 @@
 // =============================================================================
 
 const { app, BrowserWindow, shell, dialog, Tray, Menu, nativeImage, ipcMain, screen, session, crashReporter } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const { UpdateService } = require('./dist/main/update/UpdateService');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -41,6 +43,7 @@ let resizeMainWindow = null;
 let desktopLiveWindow = null;
 let server = null;
 let tray = null;
+let updateService = null;
 let isQuitting = false;
 let windowStateSaveTimer = null;
 let desktopLiveStateSaveTimer = null;
@@ -552,6 +555,10 @@ function createTray() {
     },
     { type: 'separator' },
     {
+      label: '检查更新',
+      click: () => { void runUpdateAction(); },
+    },
+    {
       label: '退出',
       click: () => {
         isQuitting = true;
@@ -559,7 +566,6 @@ function createTray() {
       },
     },
   ]);
-
   tray.setContextMenu(contextMenu);
 
   // Click tray icon to toggle window
@@ -575,6 +581,67 @@ function createTray() {
   });
 
   console.log('[IEXA] System tray created');
+}
+
+// ---- Auto update ----
+async function runUpdateAction() {
+  try {
+    if (!updateService) {
+      await dialog.showMessageBox({ type: 'info', message: '更新服务未就绪。' });
+      return;
+    }
+    const state = updateService.getState();
+    if (state.status === 'disabled') {
+      await dialog.showMessageBox({ type: 'info', message: '当前为开发模式（未打包），不检查更新。' });
+      return;
+    }
+    if (state.status === 'downloaded') {
+      const { response } = await dialog.showMessageBox({
+        type: 'info', buttons: ['立即重启', '稍后'], defaultId: 0, cancelId: 1,
+        message: `更新 ${state.version || ''} 已下载，重启后生效。`,
+      });
+      if (response === 0) updateService.install();
+      return;
+    }
+    if (state.status === 'available') {
+      const { response } = await dialog.showMessageBox({
+        type: 'info', buttons: ['下载', '取消'], defaultId: 0, cancelId: 1,
+        message: `发现新版本 ${state.version || ''}，是否现在下载？`,
+      });
+      if (response === 0) {
+        try { await updateService.download(); }
+        catch (error) { showError('更新下载失败', error.message || String(error)); }
+      }
+      return;
+    }
+    await updateService.check();
+    const next = updateService.getState();
+    if (next.status === 'not-available') await dialog.showMessageBox({ type: 'info', message: '已是最新版本。' });
+    else if (next.status === 'error') showError('检查更新失败', next.message || '未知错误');
+  } catch (error) {
+    showError('检查更新失败', error.message || String(error));
+  }
+}
+
+function createUpdateService() {
+  try {
+    updateService = new UpdateService({
+      adapter: autoUpdater,
+      enabled: app.isPackaged,
+      currentVersion: app.getVersion(),
+      onStatus: (event) => {
+        try {
+          if (tray) tray.setToolTip(event.status === 'downloaded' ? `IEXA-WIN — 更新 ${event.version || ''} 就绪` : 'IEXA-WIN');
+        } catch { /* tray may already be gone */ }
+        try { mainWindow?.webContents.send('update-status', event); } catch { /* renderer may be gone */ }
+      },
+    });
+    if (app.isPackaged) { try { autoUpdater.logger = console; } catch { /* optional */ } }
+    updateService.start();
+  } catch (error) {
+    console.error('[IEXA] Update service unavailable:', error.message || error);
+    updateService = null;
+  }
 }
 
 // ---- App Lifecycle ----
@@ -599,6 +666,7 @@ app.whenReady().then(async () => {
     await waitForServer();
     createWindow();
     if (!HEADLESS) createTray();
+    createUpdateService();
     console.log('[IEXA] App ready!');
   } catch (err) {
     console.error('[IEXA] Startup failed:', err.message);
