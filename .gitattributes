@@ -1,2 +1,40 @@
+# =============================================================================
+# 行尾与文本属性
+# -----------------------------------------------------------------------------
+# 仓库内统一存 LF（git 的 text 规范化），检出也保持 LF，避免 core.autocrlf=true
+# 带来的 "LF will be replaced by CRLF" 噪音，以及跨平台 diff 抖动。
+#
+# 匹配优先级：同名文件命中多条规则时，**文件里最后一条生效**。
+# 因此 LFS 的 -text 规则必须放在文件末尾，否则会被 * text=auto 覆盖。
+# =============================================================================
+* text=auto eol=lf
+
+# Windows 批处理必须按 CRLF 检出：cmd 对 LF-only 的 goto / 标签 / 多行结构
+# 解析不可靠。注意仓库内仍存 LF，只有工作区是 CRLF。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 明确按二进制处理，禁止任何行尾转换与文本 diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.dll  binary
+*.exe  binary
+*.node binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.wasm binary
+*.zip  binary
+*.7z   binary
+*.gz   binary
+
+# =============================================================================
+# Git LFS（必须保持在文件最后）
+# =============================================================================
 iEXA-WIN.zip filter=lfs diff=lfs merge=lfs -text
 release/IEXA-Setup.exe filter=lfs diff=lfs merge=lfs -text
