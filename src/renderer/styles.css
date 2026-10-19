@@ -3423,9 +3423,12 @@ html:not([data-collapse-tools="on"]) .tool-steps::before,
 .jobs-filter { display: inline-flex; gap: 4px; padding: 3px; margin: 2px 0 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-tertiary); }
 .jobs-filter button { border: 0; border-radius: 6px; padding: 6px 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: calc(.78rem * var(--ui-font-scale, 1)); cursor: pointer; }
 .jobs-filter button.is-active { background: var(--bg-input); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-/* The refresh action keeps its intrinsic width; without this the flex row
-   stretches it across the whole header. */
+/* The refresh and purge actions keep their intrinsic width; without this the
+   flex row stretches them across the whole header. */
 .jobs-container .settings-header .btn-sm { flex: 0 0 auto; }
+.jobs-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.jobs-actions .btn-sm { flex: 0 0 auto; }
+.jobs-actions .btn-sm:disabled { opacity: .55; cursor: default; }
 .jobs-list { display: flex; flex-direction: column; gap: 6px; }
 
 /* Compact row: one line per job. The detail pane only exists while expanded,

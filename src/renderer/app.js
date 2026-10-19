@@ -9359,7 +9359,42 @@ function renderJobs() {
   for (const node of Array.from(list.children)) {
     if (live.has(node.dataset.jobId)) continue;
     jobCardNodes.delete(node.dataset.jobId);
+    // Drop the expansion flag with the card, or purged jobs keep a Set entry
+    // alive for the rest of the process.
+    jobsExpanded.delete(node.dataset.jobId);
     node.remove();
+  }
+}
+
+function renderJobsRetentionHint(retention) {
+  const hint = document.getElementById('jobsRetentionHint');
+  if (!hint || !retention) return;
+  const days = Number(retention.days) || 0;
+  const perSession = Number(retention.perSession) || 0;
+  const text = days > 0 && perSession > 0
+    ? `工具执行按会话独立记录。已结束的记录自动保留 ${days} 天、每个会话最多 ${perSession} 条，更早的会自动清理。`
+    : '工具执行按会话独立记录。';
+  if (hint.textContent !== text) hint.textContent = text;
+}
+
+async function clearJobsHistory() {
+  // The purge follows the visible filter: clearing "当前会话" must not silently
+  // wipe every other conversation's audit trail.
+  const allSessions = jobsFilter === 'all' || !currentSessionId;
+  const scope = allSessions ? '全部会话' : '当前会话';
+  if (!(await window.IexaDialogs.confirm(`清理${scope}中已结束的任务记录？正在运行的任务会保留，此操作不可撤销。`))) return;
+  const button = document.getElementById('jobsClearBtn');
+  if (button) button.disabled = true;
+  try {
+    const query = allSessions ? '' : `?sessionId=${encodeURIComponent(currentSessionId)}`;
+    const response = await fetch(`${API_BASE}/api/jobs${query}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error(`服务返回 ${response.status}`);
+    await loadJobs();
+  } catch (error) {
+    console.error('Failed to clear jobs:', error);
+    await window.IexaDialogs.alert(`清理任务记录失败：${error?.message || error}`);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -9377,6 +9412,7 @@ async function loadJobs() {
     }
     jobsCache = Array.isArray(data.jobs) ? data.jobs : [];
     jobsLoadError = '';
+    renderJobsRetentionHint(data.retention);
     renderJobs();
   } catch (error) {
     jobsLoadError = error?.message || '无法连接本地 IEXA 服务。';
@@ -9400,6 +9436,8 @@ function syncJobsPolling() {
 function initJobsUI() {
   const refresh = document.getElementById('jobsRefreshBtn');
   if (refresh) refresh.addEventListener('click', loadJobs);
+  const clear = document.getElementById('jobsClearBtn');
+  if (clear) clear.addEventListener('click', clearJobsHistory);
   const filter = document.getElementById('jobsFilter');
   if (filter) filter.addEventListener('click', (event) => {
     const button = event.target.closest('[data-jobs-filter]');

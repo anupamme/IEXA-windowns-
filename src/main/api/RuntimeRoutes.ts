@@ -21,6 +21,9 @@ export interface RuntimeRoutesContext {
   setPermissionMode(mode: PermissionMode): void;
   normalizePermissionMode(value: unknown): PermissionMode;
   loadJobs(): unknown[];
+  /** Purge settled job records; without a session id the whole audit trail is cleared. */
+  clearJobs(sessionId?: string): { removed: number; remaining: number };
+  jobsRetention: { days: number; perSession: number; total: number };
   readTraces(sessionId: string, limit: number): unknown[];
   cancelSession(sessionId: string): void;
   clearRunningSession(sessionId: string): void;
@@ -31,7 +34,14 @@ export async function handleRuntimeRoute(req: http.IncomingMessage, res: http.Se
   if (url.pathname === '/api/jobs' && req.method === 'GET') {
     const sessionId = url.searchParams.get('sessionId') || '';
     const jobs = context.loadJobs().filter((job: any) => !sessionId || job.sessionId === sessionId).sort((a: any, b: any) => b.createdAt - a.createdAt);
-    jsonReply(res, 200, { jobs });
+    // The policy travels with the data so the panel cannot describe a retention
+    // window that no longer matches the server's constants.
+    jsonReply(res, 200, { jobs, retention: context.jobsRetention });
+    return true;
+  }
+  if (url.pathname === '/api/jobs' && req.method === 'DELETE') {
+    const sessionId = url.searchParams.get('sessionId') || '';
+    jsonReply(res, 200, { ok: true, ...context.clearJobs(sessionId) });
     return true;
   }
   if (url.pathname === '/api/agent/state' && req.method === 'GET') {

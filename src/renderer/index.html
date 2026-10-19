@@ -761,8 +761,8 @@ version: 1.0.0
     <!-- Background Task Center -->
     <div class="view" id="view-jobs">
       <div class="settings-container jobs-container">
-        <div class="settings-header"><h2>任务中心</h2><button type="button" class="btn-secondary btn-sm" id="jobsRefreshBtn">刷新</button></div>
-        <p class="sync-desc">工具执行按会话独立记录。这里可查看后台会话正在运行、已完成或失败的任务。</p>
+        <div class="settings-header"><h2>任务中心</h2><div class="jobs-actions"><button type="button" class="btn-secondary btn-sm" id="jobsRefreshBtn">刷新</button><button type="button" class="btn-secondary btn-sm" id="jobsClearBtn" title="清理已结束的任务记录">清理</button></div></div>
+        <p class="sync-desc" id="jobsRetentionHint">工具执行按会话独立记录。这里可查看后台会话正在运行、已完成或失败的任务。</p>
         <div class="jobs-filter" id="jobsFilter">
           <button type="button" data-jobs-filter="current" class="is-active">当前会话</button>
           <button type="button" data-jobs-filter="all">全部会话</button>

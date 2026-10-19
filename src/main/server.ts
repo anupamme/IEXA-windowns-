@@ -903,22 +903,73 @@ interface SessionJob {
 
 let jobsCache: SessionJob[] | undefined;
 let jobsSaveTimer: ReturnType<typeof setTimeout> | undefined;
+// Retention. The task center is an audit trail, not an archive: one busy
+// conversation produces hundreds of tool jobs a day, and the renderer walks the
+// whole list on every event and every poll. Bound both the age and the number
+// kept per conversation so the file and the list stay small on their own.
+const JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const JOB_RETENTION_PER_SESSION = 200;
+const JOB_RETENTION_TOTAL = 500;
+const LIVE_JOB_STATUSES = new Set<JobStatus>(['queued', 'awaiting_approval', 'running', 'cancelling']);
+function pruneJobs(jobs: SessionJob[]): SessionJob[] {
+  const now = Date.now();
+  const perSession = new Map<string, number>();
+  const kept: SessionJob[] = [];
+  // Walk newest first so a cap always drops the oldest settled entry.
+  for (let index = jobs.length - 1; index >= 0; index -= 1) {
+    const job = jobs[index];
+    if (!LIVE_JOB_STATUSES.has(job.status)) {
+      const settledAt = Number(job.finishedAt) || Number(job.createdAt) || 0;
+      if (settledAt && now - settledAt > JOB_RETENTION_MS) continue;
+      const seen = perSession.get(job.sessionId) || 0;
+      if (seen >= JOB_RETENTION_PER_SESSION) continue;
+      perSession.set(job.sessionId, seen + 1);
+    }
+    kept.push(job);
+  }
+  kept.reverse();
+  return kept.length > JOB_RETENTION_TOTAL ? kept.slice(-JOB_RETENTION_TOTAL) : kept;
+}
 function loadJobs(): SessionJob[] {
   if (jobsCache) return jobsCache;
   try {
     const parsed = new JsonStore<unknown>(JOBS_FILE, () => []).loadSync();
-    jobsCache = Array.isArray(parsed) ? parsed : [];
+    const raw = Array.isArray(parsed) ? parsed as SessionJob[] : [];
+    jobsCache = pruneJobs(raw);
+    // Shrink the file as soon as the app opens instead of waiting for the next
+    // job event, so an idle install still drops its expired audit trail.
+    if (jobsCache.length !== raw.length) new JsonStore<SessionJob[]>(JOBS_FILE, () => []).saveSync(jobsCache);
     return jobsCache;
   } catch { return []; }
 }
-function saveJobs(jobs: SessionJob[]): void {
+function saveJobs(jobs: SessionJob[], immediate = false): void {
   // Retain a useful recent audit without making the desktop state file unbounded.
-  jobsCache = jobs.slice(-500);
+  jobsCache = pruneJobs(jobs);
+  if (immediate) {
+    // An explicit purge must survive a quit that follows immediately, so it
+    // skips the debounce instead of racing it.
+    if (jobsSaveTimer) { clearTimeout(jobsSaveTimer); jobsSaveTimer = undefined; }
+    new JsonStore<SessionJob[]>(JOBS_FILE, () => []).saveSync(jobsCache);
+    return;
+  }
   if (jobsSaveTimer) return;
   jobsSaveTimer = setTimeout(() => {
     jobsSaveTimer = undefined;
     void new JsonStore<SessionJob[]>(JOBS_FILE, () => []).save(jobsCache || []).catch((error) => console.error('Job persistence failed:', error));
   }, 150);
+}
+/**
+ * Drop settled records, optionally scoped to one conversation. A job that is
+ * still executing keeps its row: removing it would lose the progress the task
+ * center exists to show.
+ */
+function clearJobs(sessionId = ''): { removed: number; remaining: number } {
+  const jobs = loadJobs();
+  const inScope = (job: SessionJob) => !sessionId || job.sessionId === sessionId;
+  const keep = jobs.filter((job) => !inScope(job) || LIVE_JOB_STATUSES.has(job.status));
+  const removed = jobs.length - keep.length;
+  if (removed > 0) saveJobs(keep, true);
+  return { removed, remaining: keep.length };
 }
 function updateJob(sessionId: string, toolId: string, mutate: (job: SessionJob) => void): SessionJob | undefined {
   const jobs = loadJobs();
@@ -1365,6 +1416,8 @@ function routeAllowedForDevice(device: MobileBridgeDevice, url: URL, method: str
   if (chatRoutes) {
     if ((pathname === '/api/profiles' || pathname === '/api/appearance' || pathname === '/api/soul') && !readOnly) return false;
     if (pathname === '/api/token-usage' && !readOnly) return false;
+    // Purging the audit trail is a desktop action; a paired phone may read it.
+    if (pathname === '/api/jobs' && !readOnly) return false;
     return true;
   }
   if (device.capability !== 'files') return false;
@@ -1768,6 +1821,12 @@ function createServer(auth: LocalApiAuth): http.Server {
       getPermissionMode, normalizePermissionMode,
       setPermissionMode: (mode) => { const settings = loadSettings(); settings.permissionMode = mode; saveSettings(settings); },
       loadJobs, readTraces: (sessionId, limit) => new TraceStore(TRACES_DIR).read(sessionId, limit),
+      clearJobs,
+      jobsRetention: {
+        days: Math.round(JOB_RETENTION_MS / (24 * 60 * 60 * 1000)),
+        perSession: JOB_RETENTION_PER_SESSION,
+        total: JOB_RETENTION_TOTAL,
+      },
       cancelSession: (sessionId) => cancelSessionAgent(sessionId, false), clearRunningSession: (sessionId) => runningSessionIds.delete(sessionId), cancelLiveJobs,
     })) return;
 
