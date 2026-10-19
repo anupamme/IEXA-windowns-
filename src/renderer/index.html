@@ -845,6 +845,13 @@ version: 1.0.0
   </main>
 </div>
 
+<div class="command-palette" id="commandPalette" hidden role="dialog" aria-modal="true" aria-label="命令面板">
+  <div class="command-palette-panel">
+    <input type="text" id="commandPaletteInput" class="command-palette-input" placeholder="输入命令，Enter 执行，Esc 关闭" autocomplete="off" aria-label="命令面板搜索">
+    <div class="command-palette-list" id="commandPaletteList" role="listbox"></div>
+  </div>
+</div>
+
 <div class="mobile-pair-gate" id="mobilePairGate" hidden>
   <div class="mobile-pair-dialog">
     <img class="mobile-pair-logo" src="mobile-pair-logo.png" width="52" height="52" alt="IEXA">

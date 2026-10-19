@@ -1558,7 +1558,8 @@ chatInput.addEventListener('keydown', (e) => {
       const active = menu.querySelector('.slash-item.active') || menu.querySelector('.slash-item');
       if (active) {
         e.preventDefault();
-        applySlashSkill(active.dataset.name || '');
+        if (active.dataset.kind === 'command') runSlashCommand(active.dataset.value || '');
+        else applySlashSkill(active.dataset.value || '');
       }
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -2260,6 +2261,18 @@ function queueStreamUpdate(event, data, turnToken) {
   if (pending.events.length >= 128) flushStreamUpdates(sessionId);
 }
 
+/** Desktop notification only while the window is not visible. */
+function notifyIfHidden(title, body) {
+  try {
+    if (document.visibilityState === 'visible') return;
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'default') { Notification.requestPermission().catch(() => {}); return; }
+    if (Notification.permission !== 'granted') return;
+    const notification = new Notification(title, { body, silent: false });
+    notification.onclick = () => { try { window.focus(); } catch { /* window may be gone */ } notification.close(); };
+  } catch { /* notifications are optional */ }
+}
+
 function handleSSEEvent(raw, turnToken) {
   const lines = raw.split('\n');
   let eventType = '';
@@ -2339,6 +2352,7 @@ function handleSSEEvent(raw, turnToken) {
         break;
       case 'permission_required':
         showPermissionDialog(data);
+        notifyIfHidden('IEXA 需要你的批准', '有工具调用正在等待审批');
         break;
       case 'question_required':
         showQuestionCard(data);
@@ -2351,6 +2365,7 @@ function handleSSEEvent(raw, turnToken) {
         break;
       case 'done':
         handleDone(data.stopReason, turnToken);
+        notifyIfHidden('IEXA 任务完成', data.stopReason === 'cancelled' ? '本轮任务已取消' : '本轮处理已完成');
         break;
       case 'cancelled':
         handleCancelled(turnToken);
@@ -7812,10 +7827,45 @@ function initSkillsUI() {
   }).catch(() => {});
 }
 
-// ---- Slash menu: type / to pick a skill (typing aid only, like iOS) ----
+// ---- Slash menu: system commands first, then skills (typing aid only) ----
+const SLASH_COMMANDS = [
+  { command: 'help', description: '查看可用命令' },
+  { command: 'new', description: '新建会话' },
+  { command: 'model', description: '切换模型' },
+  { command: 'plan', description: '切换到只读规划模式' },
+  { command: 'rewind', description: '打开检查点与回退' },
+  { command: 'diagnostics', description: '导出诊断包' },
+];
+
 function hideSlashMenu() {
   const menu = document.getElementById('slashMenu');
   if (menu) menu.style.display = 'none';
+}
+
+function clearSlashTrigger() {
+  if (!chatInput) return;
+  chatInput.value = chatInput.value.replace(/(?:^|\n)\/[^\s\n]*$/, (match) => (match.startsWith('\n') ? '\n' : ''));
+  chatInput.style.height = 'auto';
+  hideSlashMenu();
+  chatInput.focus();
+}
+
+async function runSlashCommand(command) {
+  clearSlashTrigger();
+  try {
+    if (command === 'help') {
+      chatInput.value = SLASH_COMMANDS.map((item) => `/${item.command} — ${item.description}`).join('\n');
+      chatInput.dispatchEvent(new Event('input'));
+      return;
+    }
+    if (command === 'new') { document.getElementById('newSessionBtn')?.click(); return; }
+    if (command === 'model') { document.getElementById('modelSelector')?.click(); return; }
+    if (command === 'plan') { await setPermissionMode('plan'); return; }
+    if (command === 'rewind') { setCheckpointOpen(true); return; }
+    if (command === 'diagnostics') { await exportDiagnostics(); return; }
+  } catch (error) {
+    addError(error.message || String(error));
+  }
 }
 
 function updateSlashMenu() {
@@ -7830,26 +7880,35 @@ function updateSlashMenu() {
   }
   const q = (m[1] || '').toLowerCase();
   const enabled = (skillsCache || []).filter((s) => s.enabled !== false);
-  const matched = enabled.filter((s) => {
-    const name = (s.name || '').toLowerCase();
-    const id = (s.id || '').toLowerCase();
-    return !q || name.includes(q) || id.includes(q);
-  }).slice(0, 8);
+  const matchedCommands = SLASH_COMMANDS
+    .filter((item) => !q || item.command.includes(q))
+    .map((item) => ({ kind: 'command', key: item.command, label: '/' + item.command, description: item.description }));
+  const matchedSkills = enabled
+    .filter((s) => {
+      const name = (s.name || '').toLowerCase();
+      const id = (s.id || '').toLowerCase();
+      return !q || name.includes(q) || id.includes(q);
+    })
+    .map((s) => ({ kind: 'skill', key: s.name, label: '/' + s.name, description: s.description || '' }));
+  const entries = [...matchedCommands, ...matchedSkills].slice(0, 8);
 
-  if (matched.length === 0) {
+  if (entries.length === 0) {
     hideSlashMenu();
     return;
   }
 
-  menu.innerHTML = matched.map((s, i) => `
-    <button type="button" class="slash-item${i === 0 ? ' active' : ''}" data-name="${escapeHtml(s.name)}">
-      <span class="slash-item-name">/${escapeHtml(s.name)}</span>
-      <span class="slash-item-desc">${escapeHtml((s.description || '').substring(0, 60))}</span>
+  menu.innerHTML = entries.map((entry, i) => `
+    <button type="button" class="slash-item${i === 0 ? ' active' : ''}" data-kind="${entry.kind}" data-value="${escapeHtml(entry.key)}">
+      <span class="slash-item-name">${escapeHtml(entry.label)}</span>
+      <span class="slash-item-desc">${escapeHtml(String(entry.description || '').substring(0, 60))}</span>
     </button>
   `).join('');
   menu.style.display = 'flex';
   menu.querySelectorAll('.slash-item').forEach((btn) => {
-    btn.addEventListener('click', () => applySlashSkill(btn.dataset.name || ''));
+    btn.addEventListener('click', () => {
+      if (btn.dataset.kind === 'command') runSlashCommand(btn.dataset.value || '');
+      else applySlashSkill(btn.dataset.value || '');
+    });
   });
 }
 
@@ -8341,6 +8400,111 @@ document.getElementById('checkpointRefresh')?.addEventListener('click', () => re
 document.addEventListener('click', (event) => {
   if (checkpointOpen && !event.target.closest?.('.checkpoint-wrap')) setCheckpointOpen(false);
 });
+
+// ---- Command palette (Ctrl/Cmd+K) ----
+const COMMAND_PALETTE_ACTIONS = [
+  { id: 'new-session', label: '新建任务', hint: 'Ctrl N', run: () => document.getElementById('newSessionBtn')?.click() },
+  { id: 'chat', label: '打开对话', run: () => document.querySelector('.nav-btn[data-view="chat"]')?.click() },
+  { id: 'skills', label: '打开技能', run: () => document.querySelector('.nav-btn[data-view="skills"]')?.click() },
+  { id: 'jobs', label: '打开任务中心', run: () => document.querySelector('.nav-btn[data-view="jobs"]')?.click() },
+  { id: 'mcp', label: '打开 MCP 服务', run: () => document.querySelector('.nav-btn[data-view="mcp"]')?.click() },
+  { id: 'plugins', label: '打开插件', run: () => document.querySelector('.nav-btn[data-view="plugins"]')?.click() },
+  { id: 'settings', label: '打开设置与扩展', run: () => document.querySelector('.nav-btn[data-view="settings"]')?.click() },
+  { id: 'appearance', label: '打开外观设置', run: () => document.querySelector('.nav-btn[data-view="appearance"]')?.click() },
+  { id: 'token-usage', label: '打开 Token 用量', run: () => document.querySelector('.nav-btn[data-view="token-calculator"]')?.click() },
+  { id: 'checkpoints', label: '检查点与回退', run: () => setCheckpointOpen(true) },
+  { id: 'plan', label: '切换到只读规划模式', run: () => setPermissionMode('plan') },
+  { id: 'risk', label: '切换到帮我批准', run: () => setPermissionMode('risk') },
+  { id: 'diagnostics', label: '导出诊断包', run: () => exportDiagnostics() },
+];
+
+let commandPaletteItems = [];
+let commandPaletteIndex = 0;
+
+function commandPaletteOpen() {
+  const palette = document.getElementById('commandPalette');
+  return Boolean(palette) && palette.hidden === false;
+}
+
+function closeCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  if (palette) palette.hidden = true;
+}
+
+function renderCommandPalette(query = '') {
+  const list = document.getElementById('commandPaletteList');
+  if (!list) return;
+  const needle = query.trim().toLowerCase();
+  commandPaletteItems = COMMAND_PALETTE_ACTIONS.filter((item) =>
+    !needle || item.label.toLowerCase().includes(needle) || item.id.includes(needle));
+  commandPaletteIndex = 0;
+  if (!commandPaletteItems.length) {
+    list.innerHTML = '<div class="command-palette-empty">没有匹配的命令</div>';
+    return;
+  }
+  list.innerHTML = commandPaletteItems.map((item, index) => `
+    <button type="button" class="command-palette-item${index === 0 ? ' active' : ''}" role="option" data-id="${escapeHtml(item.id)}">
+      <span class="command-palette-label">${escapeHtml(item.label)}</span>
+      ${item.hint ? `<span class="command-palette-hint">${escapeHtml(item.hint)}</span>` : ''}
+    </button>`).join('');
+  list.querySelectorAll('.command-palette-item').forEach((button) => {
+    button.addEventListener('click', () => runCommandPaletteItem(button.dataset.id || ''));
+  });
+}
+
+function moveCommandPaletteSelection(delta) {
+  const list = document.getElementById('commandPaletteList');
+  if (!list || !commandPaletteItems.length) return;
+  commandPaletteIndex = (commandPaletteIndex + delta + commandPaletteItems.length) % commandPaletteItems.length;
+  list.querySelectorAll('.command-palette-item').forEach((button, index) => {
+    button.classList.toggle('active', index === commandPaletteIndex);
+  });
+}
+
+function runCommandPaletteItem(id) {
+  const action = COMMAND_PALETTE_ACTIONS.find((item) => item.id === id);
+  closeCommandPalette();
+  if (!action) return;
+  try { action.run(); } catch (error) { addError(error.message || String(error)); }
+}
+
+function openCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  const input = document.getElementById('commandPaletteInput');
+  if (!palette || !input) return;
+  palette.hidden = false;
+  input.value = '';
+  renderCommandPalette('');
+  input.focus();
+}
+
+function initCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  const input = document.getElementById('commandPaletteInput');
+  if (!palette || !input) return;
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (commandPaletteOpen()) closeCommandPalette(); else openCommandPalette();
+      return;
+    }
+    if (!commandPaletteOpen()) return;
+    if (event.key === 'Escape') { event.preventDefault(); closeCommandPalette(); return; }
+    if (event.key === 'ArrowDown') { event.preventDefault(); moveCommandPaletteSelection(1); return; }
+    if (event.key === 'ArrowUp') { event.preventDefault(); moveCommandPaletteSelection(-1); return; }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const active = commandPaletteItems[commandPaletteIndex];
+      if (active) runCommandPaletteItem(active.id);
+    }
+  });
+  input.addEventListener('input', () => renderCommandPalette(input.value));
+  palette.addEventListener('click', (event) => {
+    if (event.target === palette) closeCommandPalette();
+  });
+}
+
+initCommandPalette();
   initHtmlPreview();
   initMobileBridge();
   initTextContextMenu();
