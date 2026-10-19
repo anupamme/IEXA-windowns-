@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   let bodySequence = 0;
-  const operations = { file_read: '读取', file_write: '写入', file_edit: '编辑', shell_execute: '运行', browser_fetch: '浏览', project_instructions: '读取指令', todo_write: '计划', memory_get: '检索记忆', memory_write: '记录记忆', display_file: '查看' };
+  const operations = { file_read: '读取', file_write: '写入', file_edit: '编辑', grep: '搜索', glob: '查找', shell_execute: '运行', browser_fetch: '浏览', project_instructions: '读取指令', todo_write: '计划', memory_get: '检索记忆', memory_write: '记录记忆', display_file: '查看' };
   const make = (tag, cls, text) => { const el = document.createElement(tag); el.className = cls; if (text !== undefined) el.textContent = text; return el; };
   function bindTool(block) {
     if (block.dataset.activityBound) return;

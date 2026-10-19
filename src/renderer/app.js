@@ -2619,6 +2619,8 @@ const TOOL_LABELS = {
   file_read: '读取文件',
   file_write: '写入文件',
   file_edit: '编辑文件',
+  grep: '搜索代码',
+  glob: '查找文件',
   browser_fetch: '抓取网页',
   memory_write: '写入记忆',
   memory_get: '读取记忆',
@@ -2636,6 +2638,8 @@ const TOOL_ICONS = {
   file_read: 'file',
   file_write: 'edit',
   file_edit: 'edit',
+  grep: 'search',
+  glob: 'folder',
   browser_fetch: 'globe',
   memory_write: 'memory',
   memory_get: 'search',
@@ -2916,7 +2920,7 @@ function setToolStepStatus(block, status, label) {
 
 function toolKind(name) {
   if (name === 'shell_execute' || name.startsWith('terminal_')) return 'terminal';
-  if (name === 'file_read' || name === 'file_write' || name === 'file_edit' || name === 'display_file') return 'file';
+  if (name === 'file_read' || name === 'file_write' || name === 'file_edit' || name === 'display_file' || name === 'grep' || name === 'glob') return 'file';
   if (name.startsWith('mcp_')) return 'mcp';
   if (name === 'browser_fetch') return 'web';
   if (name === 'read_image') return 'vision';
@@ -2930,6 +2934,8 @@ function toolMeta(name, args) {
   if (name.startsWith('mcp_')) return 'MCP 工具';
   if (name === 'read_image') return '视觉代理';
   if (name === 'browser_fetch') return '网页读取';
+  if (name === 'grep') return source.path ? `${source.path} · ${source.pattern || ''}` : String(source.pattern || '工作区');
+  if (name === 'glob') return String(source.pattern || '工作区');
   if (source.path) return String(source.path);
   return 'IEXA 工具';
 }

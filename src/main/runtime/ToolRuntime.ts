@@ -2,6 +2,7 @@ import * as path from 'path';
 import { ProjectInstructions } from '../agent/ProjectInstructions';
 import { AgentToolDefinition, ToolExecutionResult } from '../providers/types';
 import { ShellExecutor, FileTools, MemoryTools, BrowserFetch, WebSearch, buildMediaDisplayResult } from '../tools/ToolExecutors';
+import { SearchTools } from '../tools/SearchTools';
 import { PathSandbox, PathPolicy } from '../security/PathSandbox';
 import { PermissionManager, PermissionMode } from '../security/PermissionManager';
 import { BudgetManager } from './BudgetManager';
@@ -16,7 +17,7 @@ import { makeAgentTools } from '../tools/ToolDefinitions';
 import { QuestionResolver, normalizeAskUserArgs, formatQuestionAnswers } from './QuestionBroker';
 
 export interface ToolRuntimeConfig { workspaceDir: string; memoryDir: string; memoryEnabled?: boolean; auditDir?: string; permissionResolver?: ConstructorParameters<typeof PermissionManager>[1]; permissionMode?: PermissionMode; budget?: BudgetManager; desktopCaptureFrames?: boolean; pathMode?: 'workspace' | 'selected-roots'; selectedRoots?: readonly string[]; questionResolver?: QuestionResolver; }
-const risk: Record<string, ToolDefinition['risk']> = { project_instructions: 'low', todo_write: 'low', ask_user: 'low', shell_execute: 'high', file_read: 'low', file_write: 'medium', file_edit: 'medium', browser_fetch: 'low', web_search: 'low', display_file: 'medium', memory_write: 'medium', memory_get: 'low' };
+const risk: Record<string, ToolDefinition['risk']> = { project_instructions: 'low', todo_write: 'low', ask_user: 'low', shell_execute: 'high', file_read: 'low', file_write: 'medium', file_edit: 'medium', grep: 'low', glob: 'low', browser_fetch: 'low', web_search: 'low', display_file: 'medium', memory_write: 'medium', memory_get: 'low' };
 
 export class ToolRuntime {
   readonly registry = new ToolRegistry();
@@ -30,6 +31,7 @@ export class ToolRuntime {
   private readonly memory: MemoryTools;
   private readonly browser = new BrowserFetch();
   private readonly webSearch = new WebSearch();
+  private readonly search = new SearchTools();
   private readonly desktop: DesktopAgent;
   private readonly loopDetector = new LoopDetector();
   private readonly commandPolicy = new CommandPolicy();
@@ -194,12 +196,14 @@ export class ToolRuntime {
         if (definition.name === 'browser_fetch') return this.browser.fetch(String(args.url || ''), Number(args.max_length) || 25000, context.signal);
         if (definition.name === 'memory_write') return this.memory.writeMemory(String(args.content || ''));
         if (definition.name === 'memory_get') return this.memory.getMemory(String(args.keywords || ''), Number(args.limit) || 20);
+        if (definition.name === 'grep') return this.search.grep(args, this.config.workspaceDir, this.pathPolicy(), context.signal);
+        if (definition.name === 'glob') return this.search.glob(args, this.config.workspaceDir, this.pathPolicy(), context.signal);
         const filePath = String(args.path || ''); const resolved = await this.sandbox.resolve(filePath, { ...this.pathPolicy(), workspaceDir: this.config.workspaceDir, allowMissing: definition.name === 'file_write' });
         if (definition.name === 'file_read') { const result = await this.files.readFile(resolved.path, this.config.workspaceDir, { offset: args.offset ? Number(args.offset) : undefined, lines: args.lines ? Number(args.lines) : undefined, maxLength: args.max_length ? Number(args.max_length) : undefined, direction: args.direction as 'head' | 'tail' | undefined }); if (result.success) onSkillRead?.(resolved.path); return result; }
         if (definition.name === 'file_write') { const result = await this.files.writeFile(resolved.path, String(args.content || ''), this.config.workspaceDir, { append: args.append === true, createDirs: args.create_dirs === true }); if (result.success) onSkillWrite?.(resolved.path); return result; }
         if (definition.name === 'file_edit') { const result = await this.files.editFile(resolved.path, String(args.old_string || ''), String(args.new_string || ''), this.config.workspaceDir, args.replace_all === true); if (result.success) onSkillWrite?.(resolved.path); return result; }
         return buildMediaDisplayResult(resolved.path, this.config.workspaceDir, this.pathPolicy());
-      }, { risk: definition.name === 'desktop_control' ? 'medium' : risk[definition.name], parallelSafe: definition.name === 'project_instructions' || definition.name === 'file_read' || definition.name === 'memory_get' || definition.name === 'browser_fetch' || definition.name === 'web_search', cancellable: definition.name === 'browser_fetch' || definition.name === 'web_search' || definition.name === 'shell_execute' || definition.name === 'desktop_control' || definition.name === 'ask_user', requiresApproval: definition.name === 'desktop_control' ? false : risk[definition.name] === 'high' });
+      }, { risk: definition.name === 'desktop_control' ? 'medium' : risk[definition.name], parallelSafe: definition.name === 'project_instructions' || definition.name === 'file_read' || definition.name === 'memory_get' || definition.name === 'browser_fetch' || definition.name === 'web_search' || definition.name === 'grep' || definition.name === 'glob', cancellable: definition.name === 'browser_fetch' || definition.name === 'web_search' || definition.name === 'shell_execute' || definition.name === 'desktop_control' || definition.name === 'ask_user' || definition.name === 'grep' || definition.name === 'glob', requiresApproval: definition.name === 'desktop_control' ? false : risk[definition.name] === 'high' });
     }
   }
 }

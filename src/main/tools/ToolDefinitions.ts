@@ -276,6 +276,36 @@ export function makeAgentTools(memoryEnabled: boolean = true): AgentToolDefiniti
       propertyOrdering: ['tool_title', 'path', 'old_string', 'new_string', 'replace_all'],
     },
     {
+      name: 'grep',
+      description:
+        'Search file contents in the workspace with a regular expression (or literal text when fixed_strings is true). Returns matches as "path:line: text" and supports up to 3 context lines. Skips dependencies, build output, binaries and paths ignored by the workspace-root .gitignore. Prefer this over shell_execute for locating code, symbols or log lines: it is bounded, ranked deterministically and does not flood the context.',
+      parameters: {
+        tool_title: { type: 'string', description: "A concise 5-10 word summary (e.g. 'Find tool registration', 'Locate config reads')." },
+        pattern: { type: 'string', description: 'Regular expression (JavaScript syntax) to match, or literal text when fixed_strings is true.' },
+        path: { type: 'string', description: 'File or directory to search, relative to the workspace root (default: workspace root).' },
+        glob: { type: 'string', description: "Only search files whose workspace-relative path matches this glob, e.g. '*.ts' or 'src/**/*.js'." },
+        ignore_case: { type: 'boolean', description: 'Case-insensitive matching (default: false).' },
+        fixed_strings: { type: 'boolean', description: 'Treat pattern as literal text instead of a regular expression (default: false).' },
+        context_lines: { type: 'integer', minimum: 0, maximum: 3, description: 'Lines of context before and after each match (default: 0).' },
+        max_results: { type: 'integer', minimum: 1, maximum: 500, description: 'Maximum matching lines to return (default: 100, max: 500).' },
+      },
+      required: ['tool_title', 'pattern'],
+      propertyOrdering: ['tool_title', 'pattern', 'path', 'glob', 'ignore_case', 'fixed_strings', 'context_lines', 'max_results'],
+    },
+    {
+      name: 'glob',
+      description:
+        'List files in the workspace matching a glob pattern, newest first. Supports **, *, ? and {a,b}; returned paths are workspace-relative with "/" separators. Skips dependencies, build output and paths ignored by the workspace-root .gitignore. Use it to discover files before reading them.',
+      parameters: {
+        tool_title: { type: 'string', description: "A concise 5-10 word summary (e.g. 'List TypeScript tests', 'Find build scripts')." },
+        pattern: { type: 'string', description: "Glob pattern matched against workspace-relative paths, e.g. 'src/**/*.ts' or '**/*.test.js'." },
+        path: { type: 'string', description: 'Directory to search, relative to the workspace root (default: workspace root).' },
+        limit: { type: 'integer', minimum: 1, maximum: 1000, description: 'Maximum files to return (default: 200, max: 1000).' },
+      },
+      required: ['tool_title', 'pattern'],
+      propertyOrdering: ['tool_title', 'pattern', 'path', 'limit'],
+    },
+    {
       name: 'web_search',
       description: 'Search the public web and return ranked titles, URLs, snippets, and source domains. Search first, then use browser_fetch on a selected complete URL. Never treat a blocked page as a failed search.',
       parameters: {
