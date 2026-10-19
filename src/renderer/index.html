@@ -911,16 +911,29 @@ version: 1.0.0
   </section>
 </div>
 
-<!-- 图片附件预览：点击用户消息中的缩略图后显示 -->
+<!-- 图片附件预览：点击会话中的图片后打开。同一会话有多张图时按出现顺序左右切换，
+     支持滚轮缩放、拖拽平移、双击放大/复原，底部胶片条可直接跳转。 -->
 <div class="image-preview-overlay" id="imagePreviewOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="imagePreviewTitle">
   <div class="image-preview-dialog">
     <div class="image-preview-header">
       <span class="image-preview-title" id="imagePreviewTitle"></span>
+      <span class="image-preview-counter" id="imagePreviewCounter" hidden></span>
+      <div class="image-preview-tools" role="group" aria-label="缩放">
+        <button type="button" class="image-preview-tool" id="imagePreviewZoomOut" title="缩小（-）" aria-label="缩小"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <button type="button" class="image-preview-tool image-preview-zoom" id="imagePreviewZoomReset" title="适应窗口（0）" aria-label="适应窗口"><span id="imagePreviewZoomLabel">100%</span></button>
+        <button type="button" class="image-preview-tool" id="imagePreviewZoomIn" title="放大（+）" aria-label="放大"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
       <button type="button" class="image-preview-close ui-icon-button" id="imagePreviewClose" title="关闭预览" aria-label="关闭预览"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#ui-close"/></svg></button>
     </div>
-    <div class="image-preview-body">
-      <img id="imagePreviewImage" alt="">
+    <div class="image-preview-body" id="imagePreviewBody">
+      <div class="image-preview-stage" id="imagePreviewStage">
+        <img id="imagePreviewImage" alt="" draggable="false">
+        <div class="image-preview-error" id="imagePreviewError" hidden>图片加载失败</div>
+      </div>
+      <button type="button" class="image-preview-nav is-prev" id="imagePreviewPrev" title="上一张（←）" aria-label="上一张"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button type="button" class="image-preview-nav is-next" id="imagePreviewNext" title="下一张（→）" aria-label="下一张"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
+    <div class="image-preview-strip" id="imagePreviewStrip" role="tablist" aria-label="会话中的图片" hidden></div>
   </div>
 </div>
 
