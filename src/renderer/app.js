@@ -7814,6 +7814,10 @@ function toggleSkillAddMenu(force) {
   if (!menu) return;
   const show = force != null ? force : menu.style.display === 'none';
   menu.style.display = show ? 'flex' : 'none';
+  // Keep the trigger's state in sync for screen readers and for CSS that keys
+  // off aria-expanded rather than the inline display value.
+  const trigger = document.getElementById('skillAddBtn');
+  if (trigger) trigger.setAttribute('aria-expanded', String(show));
 }
 
 function closeSkillAddMenu() {

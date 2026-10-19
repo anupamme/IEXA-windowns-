@@ -4337,6 +4337,26 @@ html:not([data-collapse-tools="on"]) .tool-steps::before,
   justify-content: center;
 }
 
+/* Primary action: the "+" is the only way to add a skill, so it keeps the
+   accent fill instead of the transparent toolbar-button treatment. The light
+   palette's --accent is too pale for a 1.75px glyph, so it uses the darker
+   --accent-hover (>= 3:1 against --on-accent); the dark palette keeps --accent. */
+.workbench-shell .skill-add-btn {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+  border-color: transparent;
+}
+
+[data-theme="dark"] .workbench-shell .skill-add-btn {
+  background: var(--accent);
+}
+
+.workbench-shell .skill-add-btn:hover:not(:disabled),
+.workbench-shell .skill-add-btn:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-light);
+  outline: none;
+}
+
 .skill-add-menu {
   position: absolute;
   top: calc(100% + 6px);
