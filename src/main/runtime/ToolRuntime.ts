@@ -15,8 +15,9 @@ import { CommandPolicy } from '../tools/shell/CommandPolicy';
 import { DesktopAgent } from '../tools/DesktopAgent';
 import { makeAgentTools } from '../tools/ToolDefinitions';
 import { QuestionResolver, normalizeAskUserArgs, formatQuestionAnswers } from './QuestionBroker';
+import { HookSpec, runHooks } from './HookRunner';
 
-export interface ToolRuntimeConfig { workspaceDir: string; memoryDir: string; memoryEnabled?: boolean; auditDir?: string; permissionResolver?: ConstructorParameters<typeof PermissionManager>[1]; permissionMode?: PermissionMode; budget?: BudgetManager; desktopCaptureFrames?: boolean; pathMode?: 'workspace' | 'selected-roots'; selectedRoots?: readonly string[]; questionResolver?: QuestionResolver; }
+export interface ToolRuntimeConfig { workspaceDir: string; memoryDir: string; memoryEnabled?: boolean; auditDir?: string; permissionResolver?: ConstructorParameters<typeof PermissionManager>[1]; permissionMode?: PermissionMode; budget?: BudgetManager; desktopCaptureFrames?: boolean; pathMode?: 'workspace' | 'selected-roots'; selectedRoots?: readonly string[]; questionResolver?: QuestionResolver; hooks?: () => HookSpec[]; }
 const risk: Record<string, ToolDefinition['risk']> = { project_instructions: 'low', todo_write: 'low', ask_user: 'low', shell_execute: 'high', file_read: 'low', file_write: 'medium', file_edit: 'medium', grep: 'low', glob: 'low', browser_fetch: 'low', web_search: 'low', display_file: 'medium', memory_write: 'medium', memory_get: 'low' };
 
 export class ToolRuntime {
@@ -118,8 +119,22 @@ export class ToolRuntime {
         onAwaitingApproval: () => emit('awaiting_approval') });
       if (context.signal.aborted) throw new Error('Tool cancelled after approval.');
       this.budget.recordTool();
-      emit('running');
-      result = await this.scheduler.execute(tool, args, { ...context, onCancellation });
+      const hookSpecs = this.config.hooks?.() || [];
+      let blockedByHook: ToolExecutionResult | undefined;
+      if (hookSpecs.length) {
+        const pre = await runHooks(hookSpecs, { phase: 'preToolUse', tool: name, args, sessionId: context.sessionId }, this.config.workspaceDir, context.signal);
+        if (pre.block) blockedByHook = { output: `Hook 阻止了 ${name}：${pre.reason || '未说明原因'}`, success: false, executionStatus: 'denied' };
+      }
+      if (!blockedByHook) emit('running');
+      result = blockedByHook || await this.scheduler.execute(tool, args, { ...context, onCancellation });
+      if (hookSpecs.length && !blockedByHook) {
+        try {
+          await runHooks(hookSpecs, {
+            phase: 'postToolUse', tool: name, args, sessionId: context.sessionId,
+            result: { success: result.success, output: result.output, executionStatus: result.executionStatus },
+          }, this.config.workspaceDir, context.signal);
+        } catch { /* a hook failure never changes a completed tool result */ }
+      }
     } catch (error) {
       result = { output: (error as Error).message || 'Tool execution failed.', success: false,
         executionStatus: (error as { code?: string }).code === 'PERMISSION_DENIED' ? 'denied' : 'failed' };

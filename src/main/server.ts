@@ -45,6 +45,7 @@ import { UploadRoutes } from './api/UploadRoutes';
 import { MobileTlsListener } from './mobile/MobileTlsListener';
 import { resolveScopedPath } from './security/PathSandbox';
 import { groupFileChanges, undoFileChanges, undoUnavailable } from './session/FileChangeUndo';
+import { CheckpointStore, FileChange } from './session/CheckpointStore';
 import { loadProtectedSettings, saveProtectedSettings } from './security/SecretStore';
 import { handleWebDAVRoute } from './api/WebDAVRoutes';
 import { handleRuntimeRoute } from './api/RuntimeRoutes';
@@ -54,6 +55,7 @@ import { McpManager } from './mcp/McpManager';
 import { normalizeMcpToolResult } from './mcp/McpToolResult';
 import { readDesktopPreview } from './tools/desktop/DesktopPreview';
 import { VisionFallback } from './vision/VisionFallback';
+import { loadHookSpecs } from './runtime/HookRunner';
 import { imageDimensions } from './vision/ImageMetadata';
 import { PluginManager } from './plugins/PluginManager';
 import { MobileBridgeDevice, MobileBridgeManager } from './mobile/MobileBridgeManager';
@@ -71,6 +73,7 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 /** App data dir (sessions / settings / memory) — always under iexa workspace */
 const WORKSPACE_DIR = (() => { const root = path.resolve(process.env.IEXA_WORKSPACE || path.join(process.cwd(), 'workspace')); fs.mkdirSync(root, { recursive: true }); return fs.realpathSync.native(root); })();
+const CHECKPOINTS = new CheckpointStore(path.join(WORKSPACE_DIR, '.iexa-checkpoints'));
 const MEMORY_DIR = path.join(WORKSPACE_DIR, '.iexa-memory');
 const SETTINGS_FILE = path.join(WORKSPACE_DIR, '.iexa-settings.json');
 const SESSIONS_FILE = path.join(WORKSPACE_DIR, '.iexa-sessions.json');
@@ -992,7 +995,7 @@ function getOrCreateAgent(sessionId: string): AgentRuntime | null {
   agent = new AgentRuntime({ ...config, sessionId,
     subAgentDir: path.join(WORKSPACE_DIR, '.iexa-subagents'),
     onSubAgentChange: (agent) => broadcastSessionEvent('subagent_changed', { sessionId, agent }),
-    onSubAgentUsage: (usage) => recordTokenUsage(profile, usage), auditDir: path.join(WORKSPACE_DIR, '.iexa-audit'), traceDir: TRACES_DIR });
+    onSubAgentUsage: (usage) => recordTokenUsage(profile, usage), auditDir: path.join(WORKSPACE_DIR, '.iexa-audit'), traceDir: TRACES_DIR, hooks: () => loadHookSpecs(WORKSPACE_DIR) });
   if (agentCache.size >= 32) {
     const idle = [...agentCache.keys()].find(id => !runningSessionIds.has(id) && !agentCache.get(id)?.hasBackgroundWork());
     if (!idle) throw new HttpError(429, '活动会话配额已满。');
@@ -1225,6 +1228,8 @@ function routeAllowedForDevice(device: MobileBridgeDevice, url: URL, method: str
     || pathname === '/api/appearance'
     || pathname === '/api/soul'
     || pathname === '/api/jobs'
+    || pathname === '/api/checkpoints'
+    || pathname === '/api/checkpoints/rewind'
     || pathname.startsWith('/api/attachments/')
     || pathname.startsWith('/api/artifacts/')
     || pathname === '/api/uploads/init'
@@ -1805,6 +1810,29 @@ function createServer(auth: LocalApiAuth): http.Server {
     // GET /api/sessions/:id — load messages
     // PUT /api/sessions/:id — rename
     // PATCH /api/sessions/:id — archive / restore
+    // GET /api/checkpoints?sessionId= — list; POST /api/checkpoints/rewind — restore
+    if (url.pathname === '/api/checkpoints' && req.method === 'GET') {
+      const sessionId = url.searchParams.get('sessionId') || '';
+      if (!sessionId) { jsonReply(res, 400, { error: 'sessionId required' }); return; }
+      try { jsonReply(res, 200, { checkpoints: CHECKPOINTS.list(sessionId) }); }
+      catch (error: unknown) { jsonReply(res, 400, { error: (error as Error).message || '读取检查点失败。' }); }
+      return;
+    }
+    if (url.pathname === '/api/checkpoints/rewind' && req.method === 'POST') {
+      try {
+        const body = JSON.parse(await readBody(req, 128 * 1024));
+        const sessionId = String(body.sessionId || '');
+        const checkpointId = String(body.checkpointId || '');
+        if (!sessionId || !checkpointId) { jsonReply(res, 400, { error: 'sessionId 和 checkpointId 必填。' }); return; }
+        const roots = [getProjectRoot() || WORKSPACE_DIR, WORKSPACE_DIR]
+          .filter((value): value is string => Boolean(value))
+          .map((value) => path.resolve(value));
+        const result = await CHECKPOINTS.rewind(sessionId, checkpointId, roots);
+        jsonReply(res, 200, { ok: true, ...result });
+      } catch (error: unknown) { jsonReply(res, 400, { error: (error as Error).message || '回退失败。' }); }
+      return;
+    }
+
     // DELETE /api/sessions/:id — delete
     if (url.pathname.startsWith('/api/sessions/')) {
       const sid = url.pathname.split('/').pop() || '';
@@ -2449,6 +2477,7 @@ ${recentMemories}
           });
         };
 
+        const runChanges: FileChange[] = [];
         const cb: AgentLoopCallbacks = {
           onTextDelta: (_t, ft) => {
             assistantFullText = ft;
@@ -2494,6 +2523,7 @@ ${recentMemories}
             if (job) emitTurnEvent('job', job);
           },
           onToolResult: (id, r) => {
+            if (r.fileChange) runChanges.push(r.fileChange);
             const entry = assistantToolCalls.find((tc) => tc.id === id);
             const artifacts = (r.artifacts || []).map((artifact) => {
               const artifactId = `artifact_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -2577,6 +2607,9 @@ ${recentMemories}
           streamBatcher.flush();
           runningSessionIds.delete(sessionId); ownsSessionLock = false;
           finishPendingAgentInvalidation(sessionId);
+          try {
+            if (runChanges.length) CHECKPOINTS.append(sessionId, message, runChanges);
+          } catch { /* Checkpoint persistence must never change turn completion. */ }
         }
         clearPermissionSubscription(sessionId);
         clearQuestionSubscription(sessionId);
