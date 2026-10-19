@@ -450,14 +450,60 @@ function syncActiveSessionUI() {
 // Navigation
 // =============================================================================
 
+// Inactive views stay mounted but are zero-sized (`.view` in styles.css), which
+// means the chat surface has no scrollable overflow while it is hidden: the
+// browser clamps scrollTop to 0 and the transcript would come back at its first
+// message. Remember the offset - and whether the user was following the newest
+// message - before the view is deactivated, and put it back once the view has
+// geometry again.
+let chatViewScrollMemory = null;
+
+function chatViewIsActive() {
+  const view = document.getElementById('view-chat');
+  return !view || view.classList.contains('active');
+}
+
+function captureChatViewScroll() {
+  if (!visibleChatMessages || !chatViewIsActive()) return;
+  // A surface whose content fits its viewport reports equal heights; sampling
+  // then would store the collapsed offset instead of the user's place.
+  if (visibleChatMessages.scrollHeight <= visibleChatMessages.clientHeight) return;
+  chatViewScrollMemory = {
+    sessionId: currentSessionId,
+    top: visibleChatMessages.scrollTop,
+    atBottom: isChatNearBottom(),
+  };
+}
+
+function restoreChatViewScroll() {
+  const memory = chatViewScrollMemory;
+  chatViewScrollMemory = null;
+  if (!memory || memory.sessionId !== currentSessionId) return;
+  const apply = () => {
+    if (!chatViewIsActive() || memory.sessionId !== currentSessionId) return;
+    if (memory.atBottom) {
+      scrollToBottom(true);
+      return;
+    }
+    visibleChatMessages.scrollTop = memory.top;
+    isNearChatBottom = isChatNearBottom();
+    updateScrollToBottomButton();
+  };
+  // The reactivated view needs one frame of layout before scrollTop sticks.
+  requestAnimationFrame(apply);
+}
+
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
+    const view = btn.dataset.view;
+    const chatWasActive = chatViewIsActive();
+    if (view !== 'chat' && chatWasActive) captureChatViewScroll();
     document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    const view = btn.dataset.view;
     document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
     const panel = document.getElementById(`view-${view}`);
     if (panel) panel.classList.add('active');
+    if (view === 'chat' && !chatWasActive) restoreChatViewScroll();
 
     if (view === 'settings') {
       loadSettings();
@@ -6036,6 +6082,10 @@ function scrollToBottom(force, followLatest) {
 }
 
 visibleChatMessages.addEventListener('scroll', function () {
+  // A deactivated view is zero-sized, so the browser clamps its scrollTop to 0
+  // and fires a scroll event. That is a layout artifact, not a user scroll;
+  // letting it through would overwrite the remembered position.
+  if (!chatViewIsActive()) return;
   const nearBottom = isChatNearBottom();
   if (isChatUserScrollActive() && !chatProgrammaticScroll) {
     isNearChatBottom = nearBottom;

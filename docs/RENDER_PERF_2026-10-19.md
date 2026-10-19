@@ -130,4 +130,19 @@ settings → chat   布局 62ms + 样式 35ms = 任务 175ms
 真实 23MB 会话复测：冷切 `atBottom: true`、`scrollHeight 164,656`（几何真实），
 流式 30ms、滚动 10ms，全程无 >50ms 帧。
 
-全量 **643 / 643**，`npm run build` exit 0。
+## 六、保活的副作用：滚动位置被清零（已修）
+
+零尺寸盒子让聊天区在隐藏期间**没有可滚动溢出的高度**，浏览器会把 `scrollTop` 钳到 0。
+切回来时位置就停在第一条消息。实测：
+
+```
+隐藏前    top 11643  client 672  height 12315
+隐藏中    top 0      client 160171  height 160171   ← 盒子塌缩，滚动量被钳掉
+切回来    top 0      gap 11643                       ← 停在第一条
+```
+
+`display:none` 不会丢 `scrollTop`（浏览器会保留），所以这是保活改动引入的回归。
+修法是在离开聊天视图前记下 `scrollTop` 与「是否跟随最新」，回来后在下一帧恢复，
+并按会话 ID 校验，避免把 A 会话的偏移带到 B。详见 `docs/VIEW_SCROLL_MEMORY.md`。
+
+全量 **660 / 660**。
