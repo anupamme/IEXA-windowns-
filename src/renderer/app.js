@@ -939,7 +939,7 @@ function renderSessionList() {
     return `
       <div class="session-item${active}${pinned}" data-id="${escapeHtml(s.id)}">
         <div class="session-item-info" data-ui-action="switchSession" data-ui-arg="${escapeHtml(s.id)}">
-          <span class="session-item-title" data-sid="${escapeHtml(s.id)}" data-ui-action="startRename" data-ui-arg="${escapeHtml(s.id)}" title="点击重命名">${escapeHtml(s.title)}</span>
+          <span class="session-item-title" data-sid="${escapeHtml(s.id)}" data-ui-action="startRename" data-ui-arg="${escapeHtml(s.id)}" title="${escapeHtml(s.title)}" aria-label="${escapeHtml(s.title)}，点击重命名">${escapeHtml(s.title)}</span>
           <span class="session-item-time">${sessionRuntimes.get(s.id)?.isProcessing ? '<i class="session-running-dot" title="正在进行"></i>' : ''}${timeStr}</span>
         </div>
         <button type="button" class="session-item-pin ui-icon-button" data-ui-action="toggleSessionPin" data-ui-arg="${escapeHtml(s.id)}" title="${pinLabel}" aria-label="${pinLabel}">${uiIcon('pin')}</button>
@@ -1357,7 +1357,8 @@ function startRename(sessionId) {
     span.className = 'session-item-title';
     span.setAttribute('data-sid', sessionId);
     span.textContent = newTitle;
-    span.title = '点击重命名';
+    span.title = newTitle;
+    span.setAttribute('aria-label', `${newTitle}，点击重命名`);
     span.onclick = (e) => { e.stopPropagation(); startRename(sessionId); };
     input.replaceWith(span);
 

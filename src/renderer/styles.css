@@ -400,7 +400,7 @@ body {
 .session-project-heading .ui-icon { width: 13px; height: 13px; flex: 0 0 13px; }
 .session-project-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-project-heading b { margin-left: auto; min-width: 18px; text-align: center; font-size: .62rem; font-weight: 600; }
-.session-project-items { display: grid; gap: 2px; }
+.session-project-items { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 
 .session-item {
   display: flex;
@@ -409,7 +409,11 @@ body {
   padding: 8px 10px;
   border-radius: 999px;
   cursor: pointer;
-  transition: all 0.15s;
+  /* Grid items default to min-width:auto, so a long nowrap title would size the
+     whole column to its max-content and push every row past the panel edge.
+     Rows must always be exactly as wide as the list. */
+  min-width: 0;
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
   font-size: calc(0.82rem * var(--ui-font-scale, 1));
 }
 
@@ -432,6 +436,7 @@ body {
 
 .session-item-title {
   color: var(--text-primary);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
