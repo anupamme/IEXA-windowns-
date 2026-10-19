@@ -518,6 +518,9 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
       loadTokenUsage();
     }
     if (view === 'jobs') {
+      // Paint the cached rows before the fetch lands; a response that matches
+      // what is already on screen then changes no DOM at all.
+      renderJobs();
       loadJobs();
     }
     if (view === 'mcp') {
@@ -9201,11 +9204,23 @@ function initTextContextMenu() {
 
 // =============================================================================
 // Session-scoped background task center
+//
+// Compact and collapsible: one line per job, details only while expanded.
+// Rendering is keyed by job id and guarded per card. A single turn emits a job
+// event for every tool transition (create, start, each state change, result),
+// so rebuilding the list with innerHTML each time re-parsed every card dozens
+// of times per turn while tokens were streaming in the chat view behind it.
 // =============================================================================
 let jobsCache = [];
 let jobsFilter = 'current';
 let jobsRefreshTimer = null;
 let jobsLoadError = '';
+const jobsExpanded = new Set();
+const jobCardNodes = new Map();
+let jobCardSequence = 0;
+let jobsRenderShape = 'idle';
+const JOB_LIVE_STATUSES = ['queued', 'awaiting_approval', 'running', 'cancelling'];
+const JOB_CHEVRON_SVG = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function jobStatusText(status) {
   return ({ queued: '等待中', awaiting_approval: '等待批准', running: '运行中', cancelling: '正在停止', completed: '已完成', failed: '失败', denied: '已拒绝', cancelled: '已取消', timed_out: '超时' })[status] || '未知';
@@ -9214,36 +9229,140 @@ function jobTime(value) {
   const date = Number(value) ? new Date(Number(value)) : null;
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 }
-function renderJobs() {
-  const list = document.getElementById('jobsList');
+function jobsViewActive() {
+  return !!document.getElementById('view-jobs')?.classList.contains('active');
+}
+function jobCardShape(job, sessionTitles) {
+  return [job.status, job.title || '', job.toolName || '', job.kind || '',
+    job.startedAt || 0, job.finishedAt || 0, job.outputPreview || '',
+    sessionTitles.get(job.sessionId) || job.sessionId || ''].join('\u0001');
+}
+function jobEl(tag, className) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  return node;
+}
+function setJobText(node, value) {
+  if (node.textContent !== value) node.textContent = value;
+}
+function createJobCard(job) {
+  jobCardSequence += 1;
+  const root = jobEl('article', 'job-card');
+  root.dataset.jobId = job.id;
+  const row = jobEl('button', 'job-row');
+  row.type = 'button';
+  const bodyId = `job-body-${jobCardSequence}`;
+  const expanded = jobsExpanded.has(job.id);
+  row.setAttribute('aria-expanded', String(expanded));
+  row.setAttribute('aria-controls', bodyId);
+  const dot = jobEl('span', 'job-status-dot');
+  dot.setAttribute('aria-hidden', 'true');
+  const chevron = jobEl('span', 'job-row-chevron');
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.innerHTML = JOB_CHEVRON_SVG;
+  const entry = {
+    root, row, chevron, shape: '',
+    title: jobEl('span', 'job-row-title'),
+    tool: jobEl('span', 'job-row-tool'),
+    time: jobEl('time', 'job-row-time'),
+    status: jobEl('span', 'job-status'),
+  };
+  row.append(dot, entry.title, entry.tool, entry.time, entry.status, chevron);
+  const body = jobEl('div', 'job-body');
+  body.id = bodyId;
+  body.hidden = !expanded;
+  const meta = jobEl('div', 'job-body-meta');
+  entry.metaKind = jobEl('span');
+  entry.metaSession = jobEl('span');
+  meta.append(entry.metaKind, entry.metaSession);
+  entry.output = jobEl('pre', 'job-output');
+  entry.output.hidden = true;
+  body.append(meta, entry.output);
+  root.append(row, body);
+  entry.body = body;
+  return entry;
+}
+function updateJobCard(entry, job, sessionTitles) {
+  const shape = jobCardShape(job, sessionTitles);
+  if (entry.shape === shape) return;
+  entry.shape = shape;
+  const classes = `job-card is-${job.status} is-${job.kind === 'turn' ? 'turn' : 'tool'}`;
+  if (entry.root.className !== classes) entry.root.className = classes;
+  const title = job.title || (job.kind === 'turn' ? 'AI 回复' : job.toolName || '工具任务');
+  setJobText(entry.title, title);
+  if (entry.title.title !== title) entry.title.title = title;
+  const kind = job.kind === 'turn' ? 'AI 回合' : (job.toolName || '工具');
+  setJobText(entry.tool, kind);
+  setJobText(entry.metaKind, kind);
+  setJobText(entry.time, jobTime(job.startedAt || job.createdAt));
+  setJobText(entry.status, jobStatusText(job.status));
+  const session = (sessionTitles.get(job.sessionId) || job.sessionId || '').slice(0, 32);
+  setJobText(entry.metaSession, `会话 ${session}`);
+  const output = job.outputPreview || '';
+  setJobText(entry.output, output);
+  if (entry.output.hidden !== !output) entry.output.hidden = !output;
+}
+function updateJobsBadge() {
   const badge = document.getElementById('navJobBadge');
+  if (!badge) return;
+  const runningCount = jobsCache.filter((job) => JOB_LIVE_STATUSES.includes(job.status)).length;
+  const next = String(runningCount);
+  if (badge.textContent !== next) badge.textContent = next;
+  if (badge.hidden !== (runningCount === 0)) badge.hidden = runningCount === 0;
+}
+function renderJobs() {
+  updateJobsBadge();
+  const list = document.getElementById('jobsList');
   if (!list) return;
-  const runningCount = jobsCache.filter((job) => ['queued', 'awaiting_approval', 'running', 'cancelling'].includes(job.status)).length;
-  if (badge) { badge.hidden = runningCount === 0; badge.textContent = String(runningCount); }
+  // A hidden view has no layout; touching it would cost a style pass for
+  // pixels nobody can see. The cache keeps the data, activation paints it.
+  if (!jobsViewActive()) return;
   const visible = jobsFilter === 'current'
     ? jobsCache.filter((job) => job.sessionId === currentSessionId)
-    : jobsCache;
-  if (jobsLoadError) {
-    list.innerHTML = `<div class="jobs-load-error"><strong>任务中心暂时无法加载</strong><span>${escapeHtml(jobsLoadError)}</span><button type="button" class="btn-secondary btn-sm" data-jobs-retry>重新连接</button></div>`;
-    list.querySelector('[data-jobs-retry]')?.addEventListener('click', loadJobs);
+    : jobsCache.slice();
+  const shape = jobsLoadError ? 'error' : (visible.length ? 'list' : 'empty');
+  if (shape !== 'list') {
+    if (jobsRenderShape === shape) return;
+    jobsRenderShape = shape;
+    jobCardNodes.clear();
+    list.textContent = '';
+    if (shape === 'error') {
+      list.innerHTML = `<div class="jobs-load-error"><strong>任务中心暂时无法加载</strong><span>${escapeHtml(jobsLoadError)}</span><button type="button" class="btn-secondary btn-sm" data-jobs-retry>重新连接</button></div>`;
+      list.querySelector('[data-jobs-retry]')?.addEventListener('click', loadJobs);
+    } else {
+      list.innerHTML = '<div class="profile-empty">当前还没有任务。发送消息后会先创建一条 AI 处理任务；调用工具时会额外显示工具子任务。</div>';
+    }
     return;
   }
-  if (!visible.length) {
-    list.innerHTML = '<div class="profile-empty">当前还没有任务。发送消息后会先创建一条 AI 处理任务；调用工具时会额外显示工具子任务。</div>';
-    return;
+  if (jobsRenderShape !== 'list') {
+    jobsRenderShape = 'list';
+    jobCardNodes.clear();
+    list.textContent = '';
   }
-  list.innerHTML = visible.map((job) => {
-    const title = job.title || (job.kind === 'turn' ? 'AI 回复' : job.toolName || '工具任务');
-    const kind = job.kind === 'turn' ? 'AI 回合' : (job.toolName || '工具');
-    const session = (sessionsCache.find((item) => item.id === job.sessionId)?.title || job.sessionId).slice(0, 32);
-    return `
-    <article class="job-card is-${escapeHtml(job.status)} is-${escapeHtml(job.kind || 'tool')}">
-      <div class="job-card-head"><span class="job-status-dot"></span><strong>${escapeHtml(title)}</strong><span class="job-status">${jobStatusText(job.status)}</span></div>
-      <div class="job-card-meta"><span>${escapeHtml(kind)}</span><span>会话 ${escapeHtml(session)}</span><time>${jobTime(job.startedAt || job.createdAt)}</time></div>
-      ${job.outputPreview ? `<pre class="job-output">${escapeHtml(job.outputPreview)}</pre>` : ''}
-    </article>`;
-  }).join('');
+  const sessionTitles = new Map(sessionsCache.map((item) => [item.id, item.title]));
+  // Keyed reconciliation: reuse the card for a job id, mutate only the fields
+  // that actually changed. Order is repaired in one pass, so a steady poll
+  // touches no DOM at all.
+  let cursor = list.firstElementChild;
+  const live = new Set();
+  for (const job of visible) {
+    live.add(job.id);
+    let entry = jobCardNodes.get(job.id);
+    if (!entry) {
+      entry = createJobCard(job);
+      jobCardNodes.set(job.id, entry);
+    }
+    updateJobCard(entry, job, sessionTitles);
+    if (entry.root === cursor) cursor = cursor.nextElementSibling;
+    else list.insertBefore(entry.root, cursor);
+  }
+  for (const node of Array.from(list.children)) {
+    if (live.has(node.dataset.jobId)) continue;
+    jobCardNodes.delete(node.dataset.jobId);
+    node.remove();
+  }
 }
+
 async function loadJobs() {
   const list = document.getElementById('jobsList');
   try {
@@ -9274,7 +9393,7 @@ function applyJobUpdate(job) {
   renderJobs();
 }
 function syncJobsPolling() {
-  const active = document.getElementById('view-jobs')?.classList.contains('active');
+  const active = jobsViewActive() && !document.hidden;
   if (active && !jobsRefreshTimer) jobsRefreshTimer = window.setInterval(loadJobs, 2500);
   if (!active && jobsRefreshTimer) { window.clearInterval(jobsRefreshTimer); jobsRefreshTimer = null; }
 }
@@ -9288,6 +9407,24 @@ function initJobsUI() {
     jobsFilter = button.dataset.jobsFilter || 'current';
     filter.querySelectorAll('button').forEach((item) => item.classList.toggle('is-active', item === button));
     loadJobs();
+  });
+  // One delegated listener survives every re-render, so cards never carry
+  // their own handlers and a reused card keeps its expanded state.
+  document.getElementById('jobsList')?.addEventListener('click', (event) => {
+    const row = event.target.closest('.job-row');
+    if (!row) return;
+    const card = row.closest('.job-card');
+    const body = document.getElementById(row.getAttribute('aria-controls'));
+    if (!card || !body) return;
+    const open = row.getAttribute('aria-expanded') !== 'true';
+    row.setAttribute('aria-expanded', String(open));
+    body.hidden = !open;
+    if (open) jobsExpanded.add(card.dataset.jobId);
+    else jobsExpanded.delete(card.dataset.jobId);
+  });
+  document.addEventListener('visibilitychange', () => {
+    syncJobsPolling();
+    if (!document.hidden && jobsViewActive()) renderJobs();
   });
 }
 
