@@ -6215,16 +6215,24 @@ const ACCENT_PRESETS = [
 let appearanceSaveTimer = null;
 
 function currentAppearance() {
-  const style = getComputedStyle(document.documentElement);
   return {
     ...(window.IexaUiScale?.current() || {fontScale:100,iconScale:100}),
     theme: getThemeMode(),
     motion: getMotionMode(),
     accent: getAccent(),
     collapseConsecutiveTools: consecutiveToolFoldEnabled(),
-    sidebarWidth: Number.parseInt(style.getPropertyValue('--sidebar-width'), 10) || 240,
-    filesPanelWidth: Number.parseInt(style.getPropertyValue('--files-panel-width'), 10) || 300,
+    sidebarWidth: panelWidthValue('sidebar', '--sidebar-width', 240),
+    filesPanelWidth: panelWidthValue('filesPanel', '--files-panel-width', 300),
   };
+}
+
+// Panel widths live on the panel itself (see initPanelResizers) so a drag does
+// not invalidate the whole document; read them from there, falling back to the
+// :root defaults that the stylesheet and startup settings provide.
+function panelWidthValue(id, variable, fallback) {
+  const element = document.getElementById(id);
+  const value = element ? Number.parseInt(getComputedStyle(element).getPropertyValue(variable), 10) : NaN;
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function scheduleAppearanceSave() {
@@ -6253,6 +6261,7 @@ async function loadAppearanceSettings() {
     applyConsecutiveToolFoldSetting(value.collapseConsecutiveTools === true);
     document.documentElement.style.setProperty('--sidebar-width', `${value.sidebarWidth || 240}px`);
     document.documentElement.style.setProperty('--files-panel-width', `${value.filesPanelWidth || 300}px`);
+    window.IexaPanelWidths?.set(value.sidebarWidth || 240, value.filesPanelWidth || 300);
     try { localStorage.setItem('iexa-theme', mode); localStorage.setItem('iexa-accent', accent); } catch { /* */ }
     applyHighlightTheme(mode);
     syncThemeUI();
@@ -8292,8 +8301,12 @@ function initPanelResizers() {
   if (!sidebarResizer || !filesResizer) return;
 
   const defaults = { sidebar: 240, files: 300 };
+  const widthVariable = (key) => (key === 'sidebar' ? '--sidebar-width' : '--files-panel-width');
+  const panels = { sidebar: document.querySelector('.sidebar'), files: document.querySelector('.files-panel') };
   const readWidth = (key) => {
     const cssName = key === 'sidebar' ? '--sidebar-width' : '--files-panel-width';
+    const pinned = panels[key] ? Number.parseInt(getComputedStyle(panels[key]).getPropertyValue(cssName), 10) : NaN;
+    if (Number.isFinite(pinned)) return pinned;
     const persisted = Number.parseInt(getComputedStyle(root).getPropertyValue(cssName), 10);
     if (Number.isFinite(persisted)) return persisted;
     const value = Number.parseInt(localStorage.getItem(`iexa-${key}-width`) || '', 10);
@@ -8310,10 +8323,26 @@ function initPanelResizers() {
     const { min, max } = limits(key);
     return Math.round(Math.min(max, Math.max(min, value)));
   };
-  const apply = (key, value, persist = true) => {
+  // `live` writes the panel's own width, `commit` writes the custom property.
+  //
+  // The property is scoped to the panel instead of :root on purpose. It is
+  // inherited, so a :root write invalidates the style of all 34k nodes in a long
+  // transcript - measured 128ms per write (≈8fps) versus 14ms when the same
+  // value is set on .sidebar itself.
+  const apply = (key, value, persist = true, live = false) => {
     const next = clamp(value, key);
     if (key === 'sidebar') sidebarWidth = next; else filesWidth = next;
-    root.style.setProperty(key === 'sidebar' ? '--sidebar-width' : '--files-panel-width', `${next}px`);
+    const panel = panels[key];
+    if (live && panel) {
+      panel.style.width = `${next}px`;
+      return;
+    }
+    if (panel) {
+      panel.style.width = '';
+      panel.style.setProperty(widthVariable(key), `${next}px`);
+    } else {
+      root.style.setProperty(widthVariable(key), `${next}px`);
+    }
     if (persist) {
       localStorage.setItem(`iexa-${key}-width`, String(next));
       scheduleAppearanceSave();
@@ -8327,25 +8356,93 @@ function initPanelResizers() {
   normalize();
   window.addEventListener('resize', normalize);
 
+  // Appearance settings arrive before this module runs, so they seed the :root
+  // fallback; later loads have to go through the panels to stay authoritative.
+  window.IexaPanelWidths = {
+    set(sidebar, files) {
+      if (Number.isFinite(sidebar)) apply('sidebar', sidebar, false);
+      if (Number.isFinite(files)) apply('files', files, false);
+    },
+  };
+
+  // A full-viewport shield is how the drag keeps `cursor: col-resize` over every
+  // element. The old rule was `body.is-resizing *`, which forced the style engine
+  // to match a universal selector against all 34k nodes on every recalc.
+  let dragShield = null;
+  const setDragShield = (visible) => {
+    if (visible) {
+      if (!dragShield) {
+        dragShield = document.createElement('div');
+        dragShield.className = 'panel-drag-shield';
+        dragShield.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(dragShield);
+      }
+      dragShield.hidden = false;
+      return;
+    }
+    if (dragShield) dragShield.hidden = true;
+  };
+
   const bind = (handle, key) => {
     handle.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       event.preventDefault();
-      handle.setPointerCapture(event.pointerId);
+      handle.setPointerCapture?.(event.pointerId);
       handle.classList.add('is-dragging');
-      document.body.classList.add('is-resizing');
-      const resize = (clientX) => apply(key, key === 'sidebar' ? clientX : window.innerWidth - clientX);
+      // Pin the transcript to its current width before the drag starts. A width
+      // change reflows every message; on a 34k-node transcript that is ~13ms of
+      // layout per frame. Holding the width keeps the drag at 60fps and the real
+      // width is applied once, on release. The pin is written inline on the
+      // element: a class or custom property on :root would re-match the whole
+      // document (measured 128ms per style pass).
+      const chatColumn = document.getElementById('chatMessages');
+      if (chatColumn) {
+        const pinned = Math.round(chatColumn.getBoundingClientRect().width);
+        if (pinned > 0) {
+          chatColumn.style.width = `${pinned}px`;
+          chatColumn.style.overflowX = 'hidden';
+        }
+      }
+      setDragShield(true);
+      let pending = null;
+      let frame = 0;
+      let settled = false;
+      const flush = () => {
+        frame = 0;
+        if (pending === null) return;
+        apply(key, pending, false, true);
+        pending = null;
+      };
+      const resize = (clientX) => {
+        pending = key === 'sidebar' ? clientX : window.innerWidth - clientX;
+        // Pointer events can arrive far faster than the compositor can paint;
+        // coalescing to one write per frame is what keeps the drag smooth.
+        if (!frame) frame = requestAnimationFrame(flush);
+      };
       const move = (moveEvent) => resize(moveEvent.clientX);
       const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (frame) { cancelAnimationFrame(frame); frame = 0; }
+        flush();
+        if (chatColumn) {
+          chatColumn.style.width = '';
+          chatColumn.style.overflowX = '';
+        }
+        apply(key, key === 'sidebar' ? sidebarWidth : filesWidth);
         handle.classList.remove('is-dragging');
-        document.body.classList.remove('is-resizing');
-        handle.removeEventListener('pointermove', move);
-        handle.removeEventListener('pointerup', finish);
-        handle.removeEventListener('pointercancel', finish);
+        setDragShield(false);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', finish);
       };
-      handle.addEventListener('pointermove', move);
-      handle.addEventListener('pointerup', finish);
-      handle.addEventListener('pointercancel', finish);
+      // Listening on window means the drag still ends if the browser cancels
+      // pointer capture (alt-tab, touch interruption, context menu).
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', finish);
     });
 
     handle.addEventListener('dblclick', () => apply(key, defaults[key]));
