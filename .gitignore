@@ -45,6 +45,7 @@ debug.log
 *.tmp
 *.swp
 *~
+/.tmp/
 
 # Accidental shell artifacts (PowerShell redirect mistakes)
 /$null

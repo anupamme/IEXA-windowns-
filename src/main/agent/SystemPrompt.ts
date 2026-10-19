@@ -96,6 +96,35 @@ version: 1.0.0
 - 在打开项目之前，避免对未知路径做破坏性写入
 `;
 
+  // Scratch-file discipline. It lives in the stable request head on purpose:
+  // the rule only works if it applies to every turn, and a constant string
+  // keeps provider-side prefix caching intact (a per-turn timestamp here would
+  // invalidate the cached prompt and re-bill the whole conversation).
+  const tempFileSection = `## 临时文件纪律
+
+默认不产生文件。一次性的探测、测量、格式转换优先用内联命令完成
+（\`python -c\`、\`node -e\`、PowerShell here-string、管道）；
+不要为了跑一次就落盘一个脚本。
+
+确实需要落盘时：
+- 落点唯一：项目根下的 \`.tmp/\`（不存在就创建，并确认它被 \`.gitignore\` 覆盖）。
+  项目已有约定的 scratch 目录时沿用，不要另起一个。不要写项目根、源码目录或 \`tests/\`。
+- 一个任务一个文件，后续修改覆盖原文件；不要递增出 \`-v2\`、\`-final\`、\`-fix\`。
+- 文件名带任务语义（\`probe-panel-width.cjs\`），不要用 \`tmp1.js\`、\`test2.js\`。
+
+产物分两类，落点不同：
+- **交付物**（用户要的图片、视频、报告、补丁、可运行脚本）→ 放到约定位置并在回复里给出路径，不要删。
+- **中间产物**（探针脚本、A/B 对比、测量日志、临时截图）→ \`.tmp/\`，任务结束时删除。
+
+收尾自检，每轮结束前做一次：
+1. 列出这轮新建的文件，逐个判断是交付物还是中间产物。
+2. 中间产物删除；提交说明优先用内联参数，必须用文件时提交后立即删除。
+3. 跑一次 \`git status\`，确认没有留下自己制造的垃圾文件；测试夹具用 \`mkdtemp()\`，不要用固定路径。
+4. 清理过就说明清理了什么，不要用「已清理」这类空话代替实际动作。
+
+例外：用户明确要求保留，或该文件是排障所需的证据（日志、崩溃转储、复现脚本）时保留，并说明保留原因与位置。
+`;
+
   // App-owned persona leads every provider envelope. Default identity/style
   // must never compete with the saved SOUL; unrelated embedded override text
   // is not a second personality source.
@@ -127,6 +156,7 @@ ${memoryEnabled ? `- **memory_write**：把重要信息写入持久记忆（按�
 6. **可并行时并行**：多个互不依赖的操作，可在同一轮响应中一起请求。
 7. **提供 tool_title**：每次工具调用都给出简短、可读的 tool_title。
 
+${tempFileSection}
 ${workspaceSection}
 ${hasProject ? buildProjectScopeSection(options.projectScope) : ''}
 ## 项目目录指令
