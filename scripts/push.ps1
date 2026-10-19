@@ -47,6 +47,7 @@
 param(
     [string]$Message,
     [string]$Body,
+    [string]$BodyFile,
     [switch]$SkipBuild,
     [switch]$DryRun,
     [switch]$Force,
@@ -59,6 +60,14 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repo
+
+# Multi-line bodies are unreliable as command-line arguments under `pwsh -File`;
+# read them from a file instead when -BodyFile is supplied.
+if ($BodyFile) {
+    $resolvedBody = if (Test-Path -LiteralPath $BodyFile) { $BodyFile } else { Join-Path $repo $BodyFile }
+    if (-not (Test-Path -LiteralPath $resolvedBody)) { Write-Host "  XX   正文文件不存在：$BodyFile" -ForegroundColor Red; exit 1 }
+    $Body = Get-Content -LiteralPath $resolvedBody -Raw
+}
 
 function Step($text) { Write-Host "==> $text" -ForegroundColor Cyan }
 function Ok($text)   { Write-Host "  OK   $text" -ForegroundColor Green }

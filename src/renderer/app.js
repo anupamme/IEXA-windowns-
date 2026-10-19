@@ -43,6 +43,7 @@ const rendererActions = Object.freeze({
   deleteProfile: (value) => deleteProfile(value),
   deleteTokenUsage: (value) => deleteTokenUsage(value),
   clearTokenUsage: () => clearTokenUsage(),
+  rewindCheckpoint: (value) => rewindCheckpoint(value),
   stop: () => {},
 });
 document.addEventListener('click', (event) => {
@@ -3749,6 +3750,66 @@ function handleContextStatus(context) {
 }
 
 let tokenUsageRecords = [];
+
+let checkpointOpen = false;
+
+function formatCheckpointTime(value) {
+  const date = new Date(Number(value) || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+async function renderCheckpoints() {
+  const list = document.getElementById('checkpointList');
+  if (!list) return;
+  if (!currentSessionId) { list.innerHTML = '<div class="checkpoint-empty">当前没有活动会话</div>'; return; }
+  list.innerHTML = '<div class="checkpoint-empty">加载中…</div>';
+  try {
+    const response = await fetch(`${API_BASE}/api/checkpoints?sessionId=${encodeURIComponent(currentSessionId)}`, { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '加载失败');
+    const items = Array.isArray(data.checkpoints) ? data.checkpoints : [];
+    if (!items.length) { list.innerHTML = '<div class="checkpoint-empty">本次会话还没有文件修改记录</div>'; return; }
+    list.innerHTML = items.map((item) => `
+      <div class="checkpoint-row">
+        <div class="checkpoint-meta">
+          <span class="checkpoint-label" title="${escapeHtml(item.label || '')}">${escapeHtml(item.label || '未命名请求')}</span>
+          <span class="checkpoint-sub">${formatCheckpointTime(item.createdAt)} · ${Number(item.changeCount) || 0} 个文件</span>
+        </div>
+        <button type="button" class="checkpoint-restore" data-ui-action="rewindCheckpoint" data-ui-arg="${escapeHtml(item.id)}">回到这里</button>
+      </div>`).join('');
+  } catch (error) {
+    list.innerHTML = `<div class="checkpoint-empty">加载失败：${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+function setCheckpointOpen(open) {
+  checkpointOpen = open;
+  const popover = document.getElementById('checkpointPopover');
+  const button = document.getElementById('checkpointBtn');
+  if (popover) popover.hidden = !open;
+  if (button) button.setAttribute('aria-expanded', String(open));
+  if (open) renderCheckpoints();
+}
+
+async function rewindCheckpoint(checkpointId) {
+  if (!currentSessionId || !checkpointId) return;
+  const confirmed = await IexaDialogs.confirm('回退会撤销该检查点之后的所有文件修改；若文件已被其他程序改动，操作会中止并保留历史。');
+  if (!confirmed) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/checkpoints/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: currentSessionId, checkpointId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '回退失败');
+    if (projectRoot) loadFilesList(filesCurrentPath, true);
+    await renderCheckpoints();
+  } catch (error) {
+    addError(error.message || String(error));
+  }
+}
 
 function formatUsageNumber(value) {
   const n = Math.max(0, Number(value) || 0);
@@ -8257,6 +8318,14 @@ async function init() {
   initChatFocusMode();
   window.IexaPanelVisibility?.init();
   document.getElementById('archiveManagerBtn')?.addEventListener('click', showArchiveManager);
+document.getElementById('checkpointBtn')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setCheckpointOpen(!checkpointOpen);
+});
+document.getElementById('checkpointRefresh')?.addEventListener('click', () => renderCheckpoints());
+document.addEventListener('click', (event) => {
+  if (checkpointOpen && !event.target.closest?.('.checkpoint-wrap')) setCheckpointOpen(false);
+});
   initHtmlPreview();
   initMobileBridge();
   initTextContextMenu();
