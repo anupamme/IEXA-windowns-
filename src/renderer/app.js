@@ -5411,6 +5411,33 @@ function initModelSelectorControl() {
 }
 
 initModelSelectorControl();
+
+// A popover paints a rounded card, so the pixels inside its bounding box but
+// outside the rounded corner are not part of its hit area and would reach the
+// transcript behind the panel. Swallow pointer input for that sliver so a click
+// on the panel's box can never act on what is underneath it.
+function installPopoverHitGuard() {
+  const POPOVERS = '.model-selector-menu, .thinking-level-menu, .context-compaction-menu, .permission-mode-menu, .files-context-menu, .text-context-menu, .slash-menu, .checkpoint-popover';
+  const openPopoverAt = (x, y) => {
+    for (const popover of document.querySelectorAll(POPOVERS)) {
+      if (!popover.getClientRects().length) continue;
+      if (getComputedStyle(popover).visibility === 'hidden') continue;
+      const box = popover.getBoundingClientRect();
+      if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) return popover;
+    }
+    return null;
+  };
+  const guard = (event) => {
+    const popover = openPopoverAt(event.clientX, event.clientY);
+    if (!popover || popover.contains(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  document.addEventListener('pointerdown', guard, true);
+  document.addEventListener('click', guard, true);
+}
+
+installPopoverHitGuard();
 const fastModeBtn = document.getElementById('fastModeBtn');
 if (fastModeBtn) fastModeBtn.addEventListener('click', () => toggleFastMode().catch((error) => addError(error?.message || String(error))));
 initThinkingLevelControl();

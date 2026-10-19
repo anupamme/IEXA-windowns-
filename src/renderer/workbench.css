@@ -22,6 +22,11 @@
   --mac-shadow-md: 0 8px 24px #00000010;
   --mac-highlight: transparent;
   --shell-hover: #eaeaec;
+  /* Popovers float over dense content; keep them opaque so the transcript can
+     never read through and the panel edge stays unambiguous. */
+  --popover-bg: #fff;
+  --popover-border: #d9d9df;
+  --popover-shadow: 0 14px 36px #0f172a1f, 0 3px 10px #0f172a12;
   font-size: calc(13px * var(--ui-font-scale, 1));
   background: var(--bg-primary);
 }
@@ -31,6 +36,9 @@
   --border: #303034; --border-strong: #4a4a52; --code-bg: #202023;
   --bubble-user-bg: #2b2b30; --bubble-user-fg: #ececee;
   --shell-hover: #2b2b30; --shadow: 0 2px 8px #00000012; --mac-shadow-md: 0 8px 24px #00000040;
+  --popover-bg: #2c2c31;
+  --popover-border: #4a4a52;
+  --popover-shadow: 0 18px 44px #00000073, 0 3px 10px #00000059;
 }
 .workbench-shell .app { background: var(--bg-primary); }
 .workbench-shell .sidebar { padding: 18px 12px 12px; background: var(--bg-secondary); box-shadow: none; backdrop-filter: none; gap: 0; }
@@ -328,8 +336,8 @@ html[data-motion="reduced"] .workbench-shell .waiting-indicator__label {
   .workbench-shell .message.user:not(.is-queued) .message-content { padding: 10px 13px; }
 }
 /* Discrete reasoning slider, matching the supplied compact control reference. */
-.workbench-shell .thinking-level-menu { --thinking-slider-accent: #5ca5fb; width: min(252px, calc(100vw - 24px)); min-width: 0; padding: 10px 13px 13px; gap: 12px; border: 1px solid var(--border-strong); border-radius: 16px; background: #f3f3f4; box-shadow: 0 7px 22px #00000016; }
-[data-theme="dark"] .workbench-shell .thinking-level-menu { background: #303032; border-color: #414143; box-shadow: 0 7px 22px #00000030; }
+.workbench-shell .thinking-level-menu { --thinking-slider-accent: #5ca5fb; width: min(252px, calc(100vw - 24px)); min-width: 0; padding: 10px 13px 13px; gap: 12px; border: 1px solid var(--popover-border); border-radius: 16px; background: var(--popover-bg); box-shadow: var(--popover-shadow); }
+[data-theme="dark"] .workbench-shell .thinking-level-menu { background: var(--popover-bg); border-color: var(--popover-border); box-shadow: var(--popover-shadow); }
 .workbench-shell .thinking-slider-header { position: relative; display: flex; align-items: center; justify-content: center; min-height: 24px; }
 .workbench-shell .thinking-slider-value { color: var(--thinking-slider-accent); font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 550; line-height: 22px; }
 .workbench-shell .thinking-slider-value > span { color: var(--text-muted); font-weight: 400; }
@@ -363,7 +371,7 @@ html[data-motion="reduced"] .workbench-shell .waiting-indicator__label {
 .workbench-shell .permission-shield-alert { display: none; }
 .workbench-shell [data-permission-mode="full"] .permission-shield-check { display: none; }
 .workbench-shell [data-permission-mode="full"] .permission-shield-alert { display: inline; }
-.workbench-shell .permission-mode-menu { width: 304px; max-width: calc(100vw - 24px); min-width: 0; padding: 6px; border-radius: 15px; background: var(--bg-tertiary); box-shadow: 0 7px 22px #00000020; }
+.workbench-shell .permission-mode-menu { width: 304px; max-width: calc(100vw - 24px); min-width: 0; padding: 6px; border-radius: 15px; background: var(--popover-bg); border-color: var(--popover-border); box-shadow: var(--popover-shadow); }
 .workbench-shell .permission-menu-heading { padding: 4px 7px 6px; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .workbench-shell .permission-mode-menu button { display: flex; flex-direction: row; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 9px; background: transparent; color: var(--text-secondary); }
 .workbench-shell .permission-mode-menu button:hover,

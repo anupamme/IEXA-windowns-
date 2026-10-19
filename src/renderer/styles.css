@@ -5426,11 +5426,14 @@ body {
 .thinking-level-menu,
 .context-compaction-menu,
 .permission-mode-menu {
-  background: color-mix(in srgb, var(--mac-surface-solid) 88%, transparent);
-  border-color: var(--mac-hairline);
-  box-shadow: var(--mac-shadow-md), inset 0 1px 0 var(--mac-highlight);
-  -webkit-backdrop-filter: saturate(140%) blur(22px);
-  backdrop-filter: saturate(140%) blur(22px);
+  /* These float over the transcript and the file list. A translucent surface
+     let that content read through, so the panel both washed out and lost its
+     edge; the border, not the fill, now carries the boundary. */
+  background: var(--popover-bg, var(--mac-surface-solid));
+  border-color: var(--popover-border, var(--border-strong));
+  box-shadow: var(--popover-shadow, var(--mac-shadow-md));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .files-icon-btn:hover,
