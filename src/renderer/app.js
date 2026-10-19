@@ -1284,13 +1284,18 @@ async function switchSession(id, updateList = true) {
           const recordedChanges = (msg.toolCalls || []).filter(call => call.result?.success && call.result.fileChange).map(call => call.result.fileChange);
           if (recordedChanges.length || msg.deliverables) renderDeliverables(el, recordedChanges.length ? recordedChanges : msg.deliverables);
           // Render usage if present
-          if (msg.usage) {
+          if (msg.usage || (msg.durationMs !== undefined && msg.durationMs !== null)) {
+            const durationMs = Number(msg.durationMs);
+            if (Number.isFinite(durationMs) && durationMs >= 0) el.dataset.durationMs = String(durationMs);
             const usageEl = document.createElement('div');
             usageEl.className = 'message-usage';
-            renderMessageUsage(usageEl, msg.usage.inputTokens || 0, msg.usage.outputTokens || 0, msg.usage.cacheReadInputTokens);
             const footer = el.querySelector('.assistant-message-footer');
             const actions = el.querySelector('.assistant-message-actions');
             if (footer && actions) footer.insertBefore(usageEl, actions); else el.appendChild(usageEl);
+            // Render after insertion: the metrics element reads its owning
+            // message for the timestamp and the turn duration.
+            renderMessageUsage(usageEl, (msg.usage && msg.usage.inputTokens) || 0, (msg.usage && msg.usage.outputTokens) || 0,
+              msg.usage && msg.usage.cacheReadInputTokens, { pending: !msg.usage });
           }
         }
       }
@@ -2181,6 +2186,8 @@ async function runChatTurn(message, displayText, attachments, opts) {
   const sessionId = currentSessionId;
   const turnThinkingLevel = currentThinkingLevel;
   const turnToken = ++activeChatTurnToken;
+  // Measured from the send, so attachment uploads count toward the turn timer.
+  const turnStartedAt = Date.now();
   setProcessing(true);
   snapshotActiveSessionRuntime();
   document.querySelectorAll('.error-message').forEach(function (el) { el.remove(); });
@@ -2217,7 +2224,7 @@ async function runChatTurn(message, displayText, attachments, opts) {
     // Create this response placeholder in its owning session, never whichever
     // conversation happens to be visible at that instant.
     withSessionRuntime(sessionId, () => {
-      currentAssistantMsg = addMessage('assistant', '', undefined, { streaming: true });
+      currentAssistantMsg = addMessage('assistant', '', undefined, { streaming: true, turnStartedAt });
       currentAssistantMsg.dataset.liveSessionId = sessionId;
       currentAssistantMsg.dataset.thinkingLevel = turnThinkingLevel;
       showWaitingIndicator();
@@ -3812,28 +3819,153 @@ function normalizeRenderedAssets(contentEl) {
   });
 }
 
-function renderMessageUsage(usageEl, inputTokens, outputTokens, cacheReadTokens) {
+function formatTurnDuration(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  if (total < 60) return total + ' 秒';
+  if (total < 3600) {
+    return Math.floor(total / 60) + ' 分 ' + String(total % 60).padStart(2, '0') + ' 秒';
+  }
+  return Math.floor(total / 3600) + ' 小时 ' + String(Math.floor((total % 3600) / 60)).padStart(2, '0') + ' 分';
+}
+
+/**
+ * Elapsed time for one assistant turn.
+ *
+ * A live turn keeps only its start stamp; the elapsed value is recomputed from
+ * the clock so a backgrounded tab cannot drift. A finished turn records both
+ * stamps, and a restored turn reads the duration the server persisted.
+ */
+function messageTurnDuration(messageEl) {
+  if (!messageEl) return null;
+  const stored = messageEl.dataset.durationMs;
+  if (stored) {
+    const value = Number(stored);
+    if (Number.isFinite(value) && value >= 0) return { ms: value, running: false, startedAt: 0 };
+  }
+  const startedAt = Number(messageEl.dataset.turnStartedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return null;
+  const finishedAt = Number(messageEl.dataset.turnFinishedAt);
+  const finished = Number.isFinite(finishedAt) && finishedAt > 0;
+  return {
+    ms: Math.max(0, (finished ? finishedAt : Date.now()) - startedAt),
+    running: !finished,
+    startedAt,
+  };
+}
+
+function renderTurnDurationMarkup(duration) {
+  const running = !!(duration && duration.running);
+  return `<span class="message-usage-duration${running ? ' is-running' : ''}"${running ? ` data-started-at="${duration.startedAt}"` : ''} role="timer">` +
+    `<em>耗时</em> <span class="message-usage-duration-value">${formatTurnDuration(duration.ms)}</span></span>`;
+}
+
+// One shared ticker; a turn only owns a single element, so the interval is
+// started on demand and released as soon as nothing is running.
+const liveTurnDurations = new Set();
+let liveTurnDurationTimer = 0;
+
+function registerLiveTurnDuration(node) {
+  if (!node || !node.classList.contains('is-running')) return;
+  liveTurnDurations.add(node);
+  if (liveTurnDurationTimer) return;
+  liveTurnDurationTimer = window.setInterval(tickLiveTurnDurations, 1000);
+}
+
+function unregisterLiveTurnDuration(node) {
+  if (node) liveTurnDurations.delete(node);
+  if (liveTurnDurations.size || !liveTurnDurationTimer) return;
+  window.clearInterval(liveTurnDurationTimer);
+  liveTurnDurationTimer = 0;
+}
+
+function tickLiveTurnDurations() {
+  const now = Date.now();
+  liveTurnDurations.forEach((node) => {
+    const startedAt = Number(node.dataset.startedAt);
+    if (!node.classList.contains('is-running') || !Number.isFinite(startedAt) || startedAt <= 0) {
+      liveTurnDurations.delete(node);
+      return;
+    }
+    const valueEl = node.querySelector('.message-usage-duration-value');
+    if (valueEl) valueEl.textContent = formatTurnDuration(now - startedAt);
+  });
+  if (!liveTurnDurations.size && liveTurnDurationTimer) {
+    window.clearInterval(liveTurnDurationTimer);
+    liveTurnDurationTimer = 0;
+  }
+}
+
+/** Freeze the live counter at completion; later re-renders read the final value. */
+function freezeTurnDuration(messageEl) {
+  if (!messageEl) return;
+  const startedAt = Number(messageEl.dataset.turnStartedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return;
+  if (Number(messageEl.dataset.turnFinishedAt) > 0) return;
+  const finishedAt = Date.now();
+  const elapsed = Math.max(0, finishedAt - startedAt);
+  messageEl.dataset.turnFinishedAt = String(finishedAt);
+  messageEl.dataset.durationMs = String(elapsed);
+  const node = messageEl.querySelector('.message-usage-duration.is-running');
+  if (!node) return;
+  node.classList.remove('is-running');
+  node.removeAttribute('data-started-at');
+  unregisterLiveTurnDuration(node);
+  const valueEl = node.querySelector('.message-usage-duration-value');
+  if (valueEl) valueEl.textContent = formatTurnDuration(elapsed);
+}
+
+function ensureMessageUsage(messageEl) {
+  if (!messageEl) return null;
+  let usageEl = messageEl.querySelector('.message-usage');
+  if (!usageEl) {
+    usageEl = document.createElement('div');
+    usageEl.className = 'message-usage';
+    const footer = messageEl.querySelector('.assistant-message-footer');
+    const actions = messageEl.querySelector('.assistant-message-actions');
+    if (footer && actions) footer.insertBefore(usageEl, actions); else messageEl.appendChild(usageEl);
+  }
+  return usageEl;
+}
+
+function renderMessageUsage(usageEl, inputTokens, outputTokens, cacheReadTokens, options) {
+  // `pending` is the first paint of a turn: the model has not reported tokens
+  // yet, so only the live elapsed counter is shown.
+  const pending = !!(options && options.pending);
   const input = Number(inputTokens) || 0;
   const output = Number(outputTokens) || 0;
   const cacheRead = Number(cacheReadTokens);
-  const cacheMarkup = cacheReadTokens !== undefined && cacheReadTokens !== null && Number.isFinite(cacheRead)
-    ? `<i aria-hidden="true"></i><span>${Math.max(0, Math.round(cacheRead)).toLocaleString()} <em>缓存</em></span>`
-    : '';
   const messageEl = usageEl.closest('.message.assistant');
-  const timestamp = Number(messageEl && messageEl.dataset.timestamp);
-  const timeText = formatMessageTimestamp(timestamp);
-  const timeMarkup = timeText
-    ? `<time class="message-usage-time" datetime="${new Date(timestamp).toISOString()}" title="生成时间：${new Date(timestamp).toLocaleString()}">${timeText}</time>`
-    : '';
-  usageEl.innerHTML = `
-    <svg class="message-usage-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  const duration = messageTurnDuration(messageEl);
+  // The previous running element is about to be replaced; drop it from the
+  // ticker first or the interval would keep writing into a detached node.
+  const previous = usageEl.querySelector('.message-usage-duration.is-running');
+  if (previous) unregisterLiveTurnDuration(previous);
+  const parts = [];
+  if (!pending) {
+    parts.push(`<svg class="message-usage-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <rect x="4" y="12" width="3" height="7" rx="1" stroke="currentColor" stroke-width="1.7"/>
       <rect x="10.5" y="8" width="3" height="11" rx="1" stroke="currentColor" stroke-width="1.7"/>
       <rect x="17" y="4" width="3" height="15" rx="1" stroke="currentColor" stroke-width="1.7"/>
-    </svg>
-    <span>${input.toLocaleString()} <em>入</em></span>
-    <i aria-hidden="true"></i>
-    <span>${output.toLocaleString()} <em>出</em></span>${cacheMarkup}${timeMarkup}`;
+    </svg>`);
+    parts.push(`<span>${input.toLocaleString()} <em>入</em></span>`);
+    parts.push('<i aria-hidden="true"></i>');
+    parts.push(`<span>${output.toLocaleString()} <em>出</em></span>`);
+    if (cacheReadTokens !== undefined && cacheReadTokens !== null && Number.isFinite(cacheRead)) {
+      parts.push('<i aria-hidden="true"></i>');
+      parts.push(`<span>${Math.max(0, Math.round(cacheRead)).toLocaleString()} <em>缓存</em></span>`);
+    }
+  }
+  if (duration) {
+    if (parts.length) parts.push('<i aria-hidden="true"></i>');
+    parts.push(renderTurnDurationMarkup(duration));
+  }
+  const timestamp = Number(messageEl && messageEl.dataset.timestamp);
+  const timeText = formatMessageTimestamp(timestamp);
+  if (timeText) {
+    parts.push(`<time class="message-usage-time" datetime="${new Date(timestamp).toISOString()}" title="生成时间：${new Date(timestamp).toLocaleString()}">${timeText}</time>`);
+  }
+  usageEl.innerHTML = parts.join('');
+  if (duration && duration.running) registerLiveTurnDuration(usageEl.querySelector('.message-usage-duration'));
 }
 
 function formatContextTokens(tokens) {
@@ -5381,6 +5513,14 @@ function addMessage(role, content, attachments, opts) {
 
   if (role === 'assistant') appendAssistantMessageActions(msg);
 
+  if (role === 'assistant' && opts && opts.streaming) {
+    // The counter has to exist before the first token arrives, otherwise a turn
+    // that stalls for ten seconds shows nothing at all.
+    const startedAt = Number(opts.turnStartedAt);
+    msg.dataset.turnStartedAt = String(Number.isFinite(startedAt) && startedAt > 0 ? startedAt : timestamp);
+    renderMessageUsage(ensureMessageUsage(msg), null, null, undefined, { pending: true });
+  }
+
   chatMessages.appendChild(msg);
   scrollToBottom();
   return msg;
@@ -5418,6 +5558,7 @@ function appendAssistantMessageActions(messageEl) {
 
 function finalizeAssistantMessage(messageEl) {
   if (!messageEl) return;
+  freezeTurnDuration(messageEl);
   flushStreamUpdates(currentSessionId);
   if (messageEl === currentAssistantMsg) renderDeliverables(messageEl, collectLiveDeliverables());
   const followLatest = shouldFollowLatestMessage();
@@ -7155,9 +7296,18 @@ async function loadAppearanceSettings() {
     window.IexaUiScale?.apply(value);
     document.documentElement.setAttribute('data-accent', accent);
     applyConsecutiveToolFoldSetting(value.collapseConsecutiveTools === true);
-    document.documentElement.style.setProperty('--sidebar-width', `${value.sidebarWidth || 240}px`);
-    document.documentElement.style.setProperty('--files-panel-width', `${value.filesPanelWidth || 300}px`);
-    window.IexaPanelWidths?.set(value.sidebarWidth || 240, value.filesPanelWidth || 300);
+    if (window.IexaPanelWidths) {
+      // The panel module owns these properties once it has run. Writing them on
+      // :root as well would invalidate the computed style of every node in a
+      // long transcript, and a late resolution could land in the middle of a
+      // resize drag.
+      window.IexaPanelWidths.set(value.sidebarWidth || 240, value.filesPanelWidth || 300);
+    } else {
+      // First paint before the panel module exists: seed the inherited fallback
+      // it reads on startup.
+      document.documentElement.style.setProperty('--sidebar-width', `${value.sidebarWidth || 240}px`);
+      document.documentElement.style.setProperty('--files-panel-width', `${value.filesPanelWidth || 300}px`);
+    }
     try { localStorage.setItem('iexa-theme', mode); localStorage.setItem('iexa-accent', accent); } catch { /* */ }
     applyHighlightTheme(mode);
     syncThemeUI();

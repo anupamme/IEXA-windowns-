@@ -91,4 +91,41 @@ test('real browser: usage line and token page expose the cache receipt', { skip:
   assert.ok(tokenHtml.includes('<span>缓存</span><strong>0</strong>'), tokenHtml.slice(0, 400));
   assert.ok(tokenHtml.includes('<small class="token-usage-model-pct">100%</small>'), tokenHtml.slice(0, 500));
   assert.ok(tokenHtml.includes('<small class="token-usage-model-pct">0%</small>'), tokenHtml.slice(0, 500));
+
+  /* The elapsed counter is the only part of this line that has to be alive:
+     it must appear on the first paint, advance while the turn streams, and
+     stop for good once the reply is finalized. */
+  const timer = await evaluate(`(async () => {
+    const startedAt = Date.now();
+    const msg = addMessage('assistant', '', undefined, { streaming: true, turnStartedAt: startedAt });
+    const node = msg.querySelector('.message-usage-duration');
+    const firstText = node ? node.textContent.replace(/\\s+/g, ' ').trim() : '';
+    const running = !!node && node.classList.contains('is-running');
+    const tokensBeforeUsage = msg.querySelector('.message-usage').textContent.includes('入');
+    await new Promise((resolve) => setTimeout(resolve, 1250));
+    const ticked = (msg.querySelector('.message-usage-duration-value') || {}).textContent || '';
+    const previousAssistant = currentAssistantMsg;
+    currentAssistantMsg = msg;
+    handleUsage({ inputTokens: 111, outputTokens: 22, cacheReadInputTokens: 33 });
+    currentAssistantMsg = previousAssistant;
+    const withTokens = msg.querySelector('.message-usage').textContent.replace(/\\s+/g, ' ').trim();
+    finalizeAssistantMessage(msg);
+    const frozenMs = Number(msg.dataset.durationMs);
+    const frozenText = (msg.querySelector('.message-usage-duration-value') || {}).textContent || '';
+    const stillRunning = !!msg.querySelector('.message-usage-duration.is-running');
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const afterWait = (msg.querySelector('.message-usage-duration-value') || {}).textContent || '';
+    msg.remove();
+    return { firstText, running, tokensBeforeUsage, ticked, withTokens, frozenMs, frozenText, stillRunning, afterWait };
+  })()`);
+  assert.ok(timer.running, 'the first paint starts a live timer: ' + JSON.stringify(timer));
+  assert.ok(timer.firstText.includes('耗时') && timer.firstText.includes('0 秒'),
+    'the counter starts at zero seconds: ' + timer.firstText);
+  assert.equal(timer.tokensBeforeUsage, false, 'no token receipt is invented before the model reports one');
+  assert.equal(timer.ticked, '1 秒', 'the counter advances on its own: ' + JSON.stringify(timer));
+  assert.ok(timer.withTokens.includes(`${(111).toLocaleString()} 入`), timer.withTokens);
+  assert.ok(timer.withTokens.includes('耗时'), 'the counter survives the token re-render: ' + timer.withTokens);
+  assert.ok(timer.frozenMs >= 1000, 'the final duration is recorded: ' + timer.frozenMs);
+  assert.equal(timer.stillRunning, false, 'completion stops the live state');
+  assert.equal(timer.afterWait, timer.frozenText, 'a finished turn never ticks again');
 });

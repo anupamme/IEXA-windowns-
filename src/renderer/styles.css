@@ -1916,6 +1916,30 @@ body.chat-focus-mode .message.user {
   user-select: none;
 }
 
+/* Elapsed turn time sits between the cache receipt and the clock. It keeps
+   tabular figures so the digits do not shift while the counter ticks. */
+.message-usage-duration {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.message-usage-duration em {
+  font-style: normal;
+  opacity: .82;
+}
+
+.message-usage-duration-value {
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.message-usage-duration.is-running .message-usage-duration-value {
+  color: var(--accent);
+}
+
 /* Compact macOS-style response controls sit directly after usage metadata. */
 .assistant-message-footer {
   display: flex;

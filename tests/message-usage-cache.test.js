@@ -20,7 +20,12 @@ function createWindow(t) {
   const w = dom.window;
   w.escapeHtml = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   w.formatMessageTimestamp = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? '14:31' : '');
-  w.eval(pickFunctions(['renderMessageUsage', 'formatUsageNumber', 'formatEstimatedCost', 'renderTokenUsage', 'uiIcon', 'formatUsagePercent']));
+  w.eval('var liveTurnDurations = new Set(); var liveTurnDurationTimer = 0;');
+  w.eval(pickFunctions([
+    'renderMessageUsage', 'formatUsageNumber', 'formatEstimatedCost', 'renderTokenUsage', 'uiIcon', 'formatUsagePercent',
+    'formatTurnDuration', 'messageTurnDuration', 'renderTurnDurationMarkup', 'registerLiveTurnDuration',
+    'unregisterLiveTurnDuration', 'tickLiveTurnDurations', 'freezeTurnDuration', 'ensureMessageUsage',
+  ]));
   return w;
 }
 
@@ -84,7 +89,7 @@ test('server persists and streams the cache receipt for message usage', () => {
   assert.ok(server.includes('cacheReadInputTokens: u.cacheReadInputTokens'), 'lastUsage keeps the receipt');
   assert.ok(server.includes('usage?: { inputTokens: number; outputTokens: number; cacheReadInputTokens?: number };'), 'assistant message type extended');
   assert.ok(appSource.includes('0, usage.cacheReadInputTokens)'), 'live stream passes the receipt');
-  assert.ok(appSource.includes('0, msg.usage.cacheReadInputTokens)'), 'history re-render passes the receipt');
+  assert.ok(appSource.includes('msg.usage && msg.usage.cacheReadInputTokens'), 'history re-render passes the receipt');
 });
 
 test('usage rendering keeps a single handler and the dead pending path stays removed', () => {

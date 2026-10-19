@@ -504,6 +504,8 @@ interface ChatMessage {
   /** Files changed successfully in this assistant turn, independent of final prose. */
   deliverables?: { path: string; absolutePath?: string; added?: number; removed?: number }[];
   usage?: { inputTokens: number; outputTokens: number; cacheReadInputTokens?: number };
+  /** Wall-clock length of the turn that produced this reply, measured from the chat request to the final save. */
+  durationMs?: number;
   attachments?: ChatAttachmentMeta[];
   timestamp: number;
 }
@@ -1110,7 +1112,10 @@ async function saveSessionMessages(
   thinking = '',
   thinkingLevel = getThinkingLevel(),
   transcript?: TranscriptEvents,
+  startedAt?: number,
 ): Promise<void> {
+  const turnStartedAt = Number(startedAt) || Number(userMsg.timestamp) || 0;
+  const durationMs = turnStartedAt > 0 ? Math.max(0, Date.now() - turnStartedAt) : undefined;
   const deliverables = groupFileChanges(toolCalls
     .filter(call => call.result?.success && call.result.fileChange?.path)
     .map(call => call.result!.fileChange!))
@@ -1124,6 +1129,7 @@ async function saveSessionMessages(
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     deliverables: deliverables.length > 0 ? deliverables : undefined,
     usage: usage,
+    durationMs,
     timestamp: Date.now(),
   };
   const updatedMessages = [...existingMessages, userMsg, assistantMsg];
@@ -2282,6 +2288,9 @@ function createServer(auth: LocalApiAuth): http.Server {
     // Chat API
     // =====================================================================
     if (url.pathname === '/api/chat' && req.method === 'POST') {
+      // Measured from the moment the request lands, so uploads and queueing
+      // count toward the turn duration the client displays.
+      const chatTurnStartedAt = Date.now();
       // Attachments are base64 encoded in the JSON envelope, so chat needs a
       // larger body budget than ordinary settings routes. Per-file and total
       // decoded-byte limits below keep this bounded.
@@ -2726,7 +2735,7 @@ ${recentMemories}
             clearPermissionSubscription(sessionId);
             const job = updateJobById(turnJob.id, (item) => { item.status = 'failed'; item.success = false; item.finishedAt = Date.now(); item.outputPreview = String(e || '').slice(0, 320); });
             if (job) emitTurnEvent('job', job);
-            await saveSessionMessages(sessionId, existingMessages, userMsg, assistantFullText, assistantToolCalls, lastUsage, assistantThinkingText, effectiveThinkingLevel, transcriptRecorder.snapshot());
+            await saveSessionMessages(sessionId, existingMessages, userMsg, assistantFullText, assistantToolCalls, lastUsage, assistantThinkingText, effectiveThinkingLevel, transcriptRecorder.snapshot(), chatTurnStartedAt);
             emitTurnEvent('error', { message: e });
             broadcastSessionEvent('session_changed', { sessionId, reason: 'turn_finished' }, sourceClientId);
             titleJob = maybeAiTitle().finally(() => { try { res.end(); } catch { /* */ } });
@@ -2736,7 +2745,7 @@ ${recentMemories}
             clearPermissionSubscription(sessionId);
             const job = updateJobById(turnJob.id, (item) => { item.status = 'completed'; item.success = true; item.finishedAt = Date.now(); item.outputPreview = assistantFullText.replace(/\s+/g, ' ').slice(0, 320) || '模型已完成回复'; });
             if (job) emitTurnEvent('job', job);
-            await saveSessionMessages(sessionId, existingMessages, userMsg, assistantFullText, assistantToolCalls, lastUsage, assistantThinkingText, effectiveThinkingLevel, transcriptRecorder.snapshot());
+            await saveSessionMessages(sessionId, existingMessages, userMsg, assistantFullText, assistantToolCalls, lastUsage, assistantThinkingText, effectiveThinkingLevel, transcriptRecorder.snapshot(), chatTurnStartedAt);
             // Unlock UI first (iOS generates title async in background Task)
             emitTurnEvent('done', { stopReason: sr });
             broadcastSessionEvent('session_changed', { sessionId, reason: 'turn_finished' }, sourceClientId);
@@ -2750,7 +2759,7 @@ ${recentMemories}
             const job = updateJobById(turnJob.id, (item) => { item.status = 'cancelled'; item.finishedAt = Date.now(); });
             if (job) emitTurnEvent('job', job);
             cancelLiveJobs(sessionId);
-            await saveSessionMessages(sessionId, existingMessages, userMsg, assistantFullText, assistantToolCalls, lastUsage, assistantThinkingText, effectiveThinkingLevel, transcriptRecorder.snapshot());
+            await saveSessionMessages(sessionId, existingMessages, userMsg, assistantFullText, assistantToolCalls, lastUsage, assistantThinkingText, effectiveThinkingLevel, transcriptRecorder.snapshot(), chatTurnStartedAt);
             emitTurnEvent('cancelled', {});
             broadcastSessionEvent('session_changed', { sessionId, reason: 'turn_finished' }, sourceClientId);
             res.end();
